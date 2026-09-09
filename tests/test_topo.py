@@ -378,3 +378,65 @@ def test_model_projection_flag_changes_the_loss():
     _, la, _ = a.compute_generator_loss(batch)
     _, lb, _ = b.compute_generator_loss(batch)
     assert la["loss_topo"] != pytest.approx(lb["loss_topo"])
+
+
+# --- delayed start / warmup ---------------------------------------------- #
+
+def test_schedule_is_off_then_ramps_then_saturates():
+    m = _model(start_step=100, warmup_steps=50)
+    assert m.topo_schedule(1) == 0.0
+    assert m.topo_schedule(99) == 0.0
+    assert m.topo_schedule(100) == pytest.approx(1 / 50)
+    assert m.topo_schedule(124) == pytest.approx(25 / 50)
+    assert m.topo_schedule(149) == pytest.approx(1.0)
+    assert m.topo_schedule(10_000) == 1.0
+
+
+def test_schedule_without_warmup_is_a_step_function():
+    m = _model(start_step=10, warmup_steps=0)
+    assert m.topo_schedule(9) == 0.0
+    assert m.topo_schedule(10) == 1.0
+
+
+def test_no_persistence_is_computed_before_the_start_step(monkeypatch):
+    import topo_i2i.models as mod
+    m = _model(downsample=2, start_step=5)
+    calls = []
+    monkeypatch.setattr(mod, "batch_diagrams",
+                        lambda *a, **k: calls.append(1) or [])
+    loss, logs, _ = m.compute_generator_loss(_batch())
+    assert calls == [], "persistence must be skipped while the term is inactive"
+    assert logs["loss_topo"] == 0.0 and logs["topo_scale"] == 0.0
+    loss.backward()  # must still be a valid graph
+
+
+def test_term_activates_at_the_start_step():
+    m = _model(downsample=2, start_step=3)
+    scales = []
+    for _ in range(4):
+        _, logs, _ = m.compute_generator_loss(_batch())
+        scales.append(logs["topo_scale"])
+    assert scales == [0.0, 0.0, 1.0, 1.0]
+
+
+def test_warmup_scales_the_loss():
+    full = _model(downsample=2)
+    half = _model(downsample=2, start_step=1, warmup_steps=2)
+    batch = _batch()
+    _, lf, _ = full.compute_generator_loss(batch)
+    _, lh, _ = half.compute_generator_loss(batch)
+    assert lh["topo_scale"] == pytest.approx(0.5)
+    assert lh["loss_topo"] == pytest.approx(0.5 * lf["loss_topo"], rel=1e-5)
+
+
+def test_step_counter_survives_a_checkpoint_round_trip():
+    """A requeued job must not restart the warmup: the counter is a buffer."""
+    m = _model(downsample=2, start_step=2)
+    for _ in range(3):
+        m.compute_generator_loss(_batch())
+    assert "_topo_step" in m.state_dict()
+    restored = _model(downsample=2, start_step=2)
+    restored.load_state_dict(m.state_dict())
+    assert int(restored._topo_step) == 3
+    _, logs, _ = restored.compute_generator_loss(_batch())
+    assert logs["topo_scale"] == 1.0

@@ -43,6 +43,8 @@ LAMBDA_TOPO=${LAMBDA_TOPO:-1.0}
 PRESET=${PRESET:-he-ihc}          # he-ihc (H / H+DAB) or he-sr (E / DAB)
 TOPO_DOWNSAMPLE=${TOPO_DOWNSAMPLE:-2}
 TOPO_EVERY=${TOPO_EVERY:-1}
+TOPO_START=${TOPO_START:-10000}     # let the GAN find its footing first
+TOPO_WARMUP=${TOPO_WARMUP:-5000}    # then ramp the PH weight in over 5k steps
 
 RUN_NAME="${PRESET}_cyc${PH_CYC}_trans${PH_TRANS}"
 OUTPUT="${RUNS}/${RUN_NAME}"
@@ -76,6 +78,8 @@ srun topo-train \
   --lambda-ph-trans "$PH_TRANS" \
   --preset "$PRESET" \
   --topo-downsample "$TOPO_DOWNSAMPLE" \
-  --topo-every "$TOPO_EVERY"
+  --topo-every "$TOPO_EVERY" \
+  --topo-start-step "$TOPO_START" \
+  --topo-warmup-steps "$TOPO_WARMUP"
 
 echo "[$(date '+%Y-%m-%dT%H:%M:%S')] task ${i}: ${RUN_NAME} finished"

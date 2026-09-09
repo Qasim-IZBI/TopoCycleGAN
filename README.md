@@ -158,6 +158,25 @@ Full 2-D Wasserstein between diagrams is deliberately not offered: it makes the
 matching a genuine assignment problem, measured at ~500 ms per pair against
 0.2 ms, which is why TopoGAN projects to one axis in the first place.
 
+## When the PH terms switch on
+
+```bash
+topo-train ... --topo-start-step 10000 --topo-warmup-steps 5000
+```
+
+Early in training the generator emits noise, and noise maximises the number of
+critical points (1845 H0 + 3140 H1 on a 128x128 random field) — so the term is at
+its largest, least meaningful and most expensive exactly when it can do least
+good. `--topo-start-step N` skips it entirely until step N: no persistence is
+computed at all, so those steps also run at baseline CycleGAN speed.
+`--topo-warmup-steps M` then ramps the weight linearly from 0 to 1 over M steps
+instead of switching it on in one jump, which spares Adam's moment estimates a
+discontinuity in the loss.
+
+The multiplier is logged each step as `topo_scale`, and the step counter is a
+registered buffer, so it is checkpointed — a requeued SLURM job resumes its
+schedule rather than restarting the warmup.
+
 ## Cost
 
 Persistence is CPU-bound and unbatched, and there are now six fields to diagram

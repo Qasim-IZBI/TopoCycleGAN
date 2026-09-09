@@ -80,6 +80,15 @@ class TopoConfig:
     # 'birth', 'lifetime' or 'death' force one for every dimension.
     projection: str = "auto"
 
+    # Delay the PH terms until the generator produces something worth measuring.
+    # Early outputs are noise, and noise maximises the number of critical points,
+    # so the term is at its largest, least meaningful and most expensive exactly
+    # when it can do least good. `warmup_steps` then ramps the weight linearly
+    # from 0 to 1 rather than switching it on in one step, which avoids a jump in
+    # the loss that Adam's moment estimates have to absorb.
+    start_step: int = 0
+    warmup_steps: int = 0
+
     # Cost control -- persistence is CPU-bound and unbatched, and there are now
     # six fields per step to diagram.
     every_n_steps: int = 1
@@ -103,7 +112,9 @@ class TopoLossMixin:
 
     def _init_topo(self, cfg: TopoConfig) -> None:
         self.topo_cfg = cfg
-        self._topo_step = 0
+        # A buffer, not a plain int, so it is saved in the checkpoint: a requeued
+        # job must not restart the warmup from zero.
+        self.register_buffer("_topo_step", torch.zeros((), dtype=torch.long))
         self._field_mods = {
             "A": make_field(cfg.field_A, cfg.combine),
             "B": make_field(cfg.field_B, cfg.combine),
@@ -125,6 +136,16 @@ class TopoLossMixin:
             rgb = rgb.detach()
         return batch_diagrams(self._to_field(rgb, domain), tuple(cfg.dims))
 
+    def topo_schedule(self, step: int) -> float:
+        """Weight multiplier for the PH terms at this step: 0 before
+        `start_step`, then ramping to 1 over `warmup_steps`."""
+        cfg = self.topo_cfg
+        if step < cfg.start_step:
+            return 0.0
+        if cfg.warmup_steps <= 0:
+            return 1.0
+        return min(1.0, (step - cfg.start_step + 1) / cfg.warmup_steps)
+
     def topo_terms(self, batch: Dict[str, torch.Tensor],
                    visuals: Dict[str, torch.Tensor]):
         """Returns (weighted total, logs) for the four PH terms.
@@ -136,11 +157,15 @@ class TopoLossMixin:
         """
         cfg = self.topo_cfg
         self._topo_step += 1
+        step = int(self._topo_step)
+        scale = self.topo_schedule(step)
 
         zero = visuals["fake_B"].sum() * 0.0
         logs = {"loss_ph_cyc_H": 0.0, "loss_ph_cyc_I": 0.0,
-                "loss_ph_trans_H": 0.0, "loss_ph_trans_I": 0.0, "loss_topo": 0.0}
-        if cfg.lambda_topo == 0 or (self._topo_step % cfg.every_n_steps) != 0:
+                "loss_ph_trans_H": 0.0, "loss_ph_trans_I": 0.0,
+                "loss_topo": 0.0, "topo_scale": scale}
+        # Skip the persistence computation entirely when it would not be used.
+        if cfg.lambda_topo == 0 or scale == 0.0 or (step % cfg.every_n_steps) != 0:
             return zero, logs
 
         dims = tuple(cfg.dims)
@@ -171,6 +196,7 @@ class TopoLossMixin:
             logs["loss_ph_trans_H"] = float(trans_H.detach().cpu())
             logs["loss_ph_trans_I"] = float(trans_I.detach().cpu())
 
+        total = total * scale
         logs["loss_topo"] = float(total.detach().cpu())
         return total, logs
 

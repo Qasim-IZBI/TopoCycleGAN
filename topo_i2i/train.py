@@ -64,6 +64,12 @@ def build_parser() -> argparse.ArgumentParser:
                    choices=("auto", "birth", "lifetime", "death"),
                    help="which 1-D projection of the diagrams to compare; "
                         "'auto' uses lifetime for H0 and birth for H1")
+    g.add_argument("--topo-start-step", type=int, default=0, metavar="N",
+                   help="delay the PH terms until step N (0 = from the start); "
+                        "before N no persistence is computed at all")
+    g.add_argument("--topo-warmup-steps", type=int, default=0, metavar="M",
+                   help="after --topo-start-step, ramp the PH weight linearly "
+                        "from 0 to 1 over M steps (0 = switch on at once)")
     g.add_argument("--topo-every", type=int, default=1,
                    help="compute the PH terms every n-th step (cost control)")
     g.add_argument("--topo-max-images", type=int, default=0,
@@ -100,6 +106,8 @@ def main() -> None:
         combine=fields["combine"],
         dims=tuple(args.topo_dims),
         projection=args.topo_projection,
+        start_step=args.topo_start_step,
+        warmup_steps=args.topo_warmup_steps,
         every_n_steps=args.topo_every,
         max_images=args.topo_max_images,
         downsample=args.topo_downsample,
