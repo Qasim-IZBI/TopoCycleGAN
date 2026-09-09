@@ -40,7 +40,7 @@ STEPS=${STEPS:-100000}
 BATCH_SIZE=${BATCH_SIZE:-4}
 IMAGE_SIZE=${IMAGE_SIZE:-256}
 LAMBDA_TOPO=${LAMBDA_TOPO:-1.0}
-PRESET=${PRESET:-he-ki67}          # he-ki67 (H / H+DAB) or he-sr (E / DAB)
+PRESET=${PRESET:-he-ihc}          # he-ihc (H / H+DAB) or he-sr (E / DAB)
 TOPO_DOWNSAMPLE=${TOPO_DOWNSAMPLE:-2}
 TOPO_EVERY=${TOPO_EVERY:-1}
 

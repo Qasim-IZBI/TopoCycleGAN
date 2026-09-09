@@ -46,7 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="weight on the cycle-topology terms (L_PH-cyc,H + L_PH-cyc,I)")
     g.add_argument("--lambda-ph-trans", type=float, default=1.0,
                    help="weight on the translation terms (L_PH-trans,H + L_PH-trans,I)")
-    g.add_argument("--preset", default="he-ki67", choices=sorted(FIELD_PRESETS),
+    g.add_argument("--preset", default="he-ihc", choices=sorted(FIELD_PRESETS),
                    help="which stain channels each domain is deconvolved onto: "
                         + "; ".join("%s -> %s / %s" % (k, v["field_A"], v["field_B"])
                                     for k, v in sorted(FIELD_PRESETS.items())))

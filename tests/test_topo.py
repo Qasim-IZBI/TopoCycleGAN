@@ -289,7 +289,7 @@ def test_trans_gradient_reaches_the_generator():
 
 def test_presets_cover_both_translation_tasks():
     from topo_i2i.fields import FIELD_PRESETS
-    assert FIELD_PRESETS["he-ki67"] == {"field_A": "hematoxylin",
+    assert FIELD_PRESETS["he-ihc"] == {"field_A": "hematoxylin",
                                         "field_B": "dab+hematoxylin",
                                         "combine": "max"}
     assert FIELD_PRESETS["he-sr"] == {"field_A": "eosin",
@@ -304,7 +304,7 @@ def test_explicit_fields_override_the_preset():
     r = resolve_fields("he-sr", field_B="sirius_red", combine="sum")
     assert r == {"field_A": "eosin", "field_B": "sirius_red", "combine": "sum"}
     # a partial override leaves the rest of the preset intact
-    assert resolve_fields("he-ki67", field_A="gray")["field_B"] == "dab+hematoxylin"
+    assert resolve_fields("he-ihc", field_A="gray")["field_B"] == "dab+hematoxylin"
 
 
 def test_unknown_preset_is_rejected():

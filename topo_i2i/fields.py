@@ -145,14 +145,15 @@ class _GrayField(nn.Module):
 # Field pairs for the translation tasks, named by the two domains. `--preset`
 # selects one; --field-A / --field-B / --field-combine override any part of it.
 #
-#   he-ki67  Ki67 is DAB with a hematoxylin counterstain, so domain B merges
-#            both to get *all* nuclei rather than only the positive ones, and
-#            domain A uses hematoxylin to match.
+#   he-ihc   DAB IHC (Ki67, and chromogenic IHC generally) carries a
+#            hematoxylin counterstain, so domain B merges both to get *all*
+#            nuclei rather than only the positive ones, and domain A uses
+#            hematoxylin to match.
 #   he-sr    Sirius Red marks collagen, and eosin is the H&E channel that picks
 #            up the same collagen-rich stroma, so the pair is E <-> the target's
 #            chromogen channel.
 FIELD_PRESETS = {
-    "he-ki67": {"field_A": "hematoxylin", "field_B": "dab+hematoxylin", "combine": "max"},
+    "he-ihc": {"field_A": "hematoxylin", "field_B": "dab+hematoxylin", "combine": "max"},
     "he-sr":   {"field_A": "eosin",       "field_B": "dab",             "combine": "max"},
 }
 

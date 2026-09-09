@@ -43,7 +43,7 @@ Domain A is H&E, domain B is IHC.
 
 | preset | domain A | domain B | rationale |
 |---|---|---|---|
-| `he-ki67` | `hematoxylin` | `dab+hematoxylin` (max) | Ki67 is DAB on a hematoxylin counterstain, so B merges both to get *all* nuclei, not only the positive ones |
+| `he-ihc` | `hematoxylin` | `dab+hematoxylin` (max) | DAB IHC (e.g. Ki67) carries a hematoxylin counterstain, so B merges both to get *all* nuclei, not only the positive ones |
 | `he-sr` | `eosin` | `dab` | Sirius Red marks collagen, and eosin is the H&E channel that picks up the same collagen-rich stroma |
 
 DAB alone sees only the *positive* nuclei, so the topology it measures changes
