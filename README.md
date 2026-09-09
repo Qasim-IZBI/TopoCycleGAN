@@ -21,6 +21,85 @@ topo-train --dataA tiles/HE --dataB tiles/IHC --output runs/topo01 \
 
 `--lambda-topo 0` gives the plain CycleGAN baseline through the identical code path.
 
+## All flags
+
+`topo-train --help` is authoritative; this is the same surface with the reasoning.
+
+### Data and run
+
+| flag | default | meaning |
+|---|---|---|
+| `--dataA` | *required* | source-domain tiles (H&E) |
+| `--dataB` | *required* | target-domain tiles (IHC / Sirius Red) |
+| `--output` | `runs/topo` | run directory; checkpoints and samples go under it |
+| `--steps` | `100000` | training steps |
+| `--batch-size` | `4` | |
+| `--image-size` | `256` | tile size fed to the model |
+| `--num-workers` | `4` | dataloader workers |
+| `--lr` | `2e-4` | Adam learning rate, betas fixed at (0.5, 0.999) |
+| `--amp` | off | mixed precision |
+| `--save-steps` | `25000` | permanent checkpoint interval (`step_latest.pt` is written every step) |
+| `--log-steps` | `1000` | logging interval |
+
+Training resumes automatically from `--output` if checkpoints are already there.
+
+### Loss weights
+
+| flag | default | meaning |
+|---|---|---|
+| `--lambda-topo` | `1.0` | overall scale on all PH terms; **`0` gives the plain CycleGAN baseline** through the identical code path |
+| `--lambda-ph-cyc` | `1.0` | weight on the two cycle terms (`L_PH-cyc,H` + `L_PH-cyc,I`) |
+| `--lambda-ph-trans` | `1.0` | weight on the two translation terms (`L_PH-trans,H` + `L_PH-trans,I`) |
+
+Adversarial, cycle-L1 and identity weights come from `CycleGANConfig`
+(`lambda_cycle=10.0`, `lambda_identity=0.5`) and are not exposed on this CLI.
+
+### Which channels
+
+| flag | default | meaning |
+|---|---|---|
+| `--preset` | `he-ihc` | `he-ihc` → A=`hematoxylin`, B=`dab+hematoxylin`; `he-sr` → A=`eosin`, B=`dab` |
+| `--field-A` | from preset | override domain A: `gray`, a stain name, or `a+b` |
+| `--field-B` | from preset | override domain B |
+| `--field-combine` | from preset | how an `a+b` field merges: `max`, `sum`, `mean` |
+| `--no-topo-invert` | off | keep the field as-is; by default it is negated so strong stain becomes the sublevel-set foreground |
+
+The resolved fields are printed at startup as a `[fields]` line.
+
+### What is compared
+
+| flag | default | meaning |
+|---|---|---|
+| `--topo-dims` | `0 1` | homology dimensions: 0 connected components, 1 loops. Summed into one number |
+| `--topo-projection` | `auto` | `auto` = lifetime for H0, birth for H1; or force `birth` / `lifetime` / `death` everywhere |
+
+### Schedule and cost
+
+| flag | default | meaning |
+|---|---|---|
+| `--topo-start-step` | `0` | skip the PH terms until step N; no persistence is computed before it |
+| `--topo-warmup-steps` | `0` | ramp the PH weight 0→1 over M steps after the start (0 = hard switch) |
+| `--topo-every` | `1` | compute the PH terms only every n-th step |
+| `--topo-max-images` | `0` | use only the first k images of each batch (0 = all) |
+| `--topo-downsample` | `1` | average-pool the field by this factor before persistence |
+
+Persistence is CPU-bound and unbatched, so these four are the levers that decide
+how much the term costs. See **Cost** below for measured numbers.
+
+### Extra logged values
+
+Beyond the zoo's own losses, each log line carries `loss_ph_cyc_H`,
+`loss_ph_cyc_I`, `loss_ph_trans_H`, `loss_ph_trans_I`, `loss_topo` (their
+weighted sum) and `topo_scale` (the schedule multiplier).
+
+### Sweep script environment
+
+`slurm/train_sweep.sh` reads these via `--export=ALL,NAME=value`:
+`DATA_A`, `DATA_B`, `RUNS`, `VENV`, `STEPS`, `BATCH_SIZE`, `IMAGE_SIZE`,
+`PRESET`, `LAMBDA_TOPO`, `TOPO_DOWNSAMPLE`, `TOPO_EVERY`, `TOPO_START`,
+`TOPO_WARMUP`. The two PH weights come from the array index, not the
+environment.
+
 ## Objective
 
 ```
@@ -99,7 +178,6 @@ placeholders — fill them in for your cluster.
 Note the jobs are deliberately CPU-heavy: persistence is single-threaded per
 image and runs while the GPU idles, so expect low GPU utilisation.
 
-## The loss
 ## The loss
 
 | module | contents |
