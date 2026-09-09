@@ -283,3 +283,40 @@ def test_trans_gradient_reaches_the_generator():
     loss.backward()
     assert any(p.grad is not None and p.grad.abs().sum() > 0
                for p in m.generator_parameters())
+
+
+# --- field presets -------------------------------------------------------- #
+
+def test_presets_cover_both_translation_tasks():
+    from topo_i2i.fields import FIELD_PRESETS
+    assert FIELD_PRESETS["he-ki67"] == {"field_A": "hematoxylin",
+                                        "field_B": "dab+hematoxylin",
+                                        "combine": "max"}
+    assert FIELD_PRESETS["he-sr"] == {"field_A": "eosin",
+                                      "field_B": "dab",
+                                      "combine": "max"}
+
+
+def test_explicit_fields_override_the_preset():
+    from topo_i2i.fields import resolve_fields
+    assert resolve_fields("he-sr") == {"field_A": "eosin", "field_B": "dab",
+                                       "combine": "max"}
+    r = resolve_fields("he-sr", field_B="sirius_red", combine="sum")
+    assert r == {"field_A": "eosin", "field_B": "sirius_red", "combine": "sum"}
+    # a partial override leaves the rest of the preset intact
+    assert resolve_fields("he-ki67", field_A="gray")["field_B"] == "dab+hematoxylin"
+
+
+def test_unknown_preset_is_rejected():
+    from topo_i2i.fields import resolve_fields
+    with pytest.raises(ValueError, match="unknown preset"):
+        resolve_fields("he-pas")
+
+
+def test_preset_fields_are_all_constructible():
+    from topo_i2i.fields import FIELD_PRESETS, make_field
+    rgb = torch.rand(1, 3, 8, 8) * 2 - 1
+    for name, spec in FIELD_PRESETS.items():
+        for key in ("field_A", "field_B"):
+            f = make_field(spec[key], spec["combine"])(rgb)
+            assert f.shape == (1, 8, 8), (name, key)

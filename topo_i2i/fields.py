@@ -140,3 +140,30 @@ class _GrayField(nn.Module):
 
     def forward(self, rgb: torch.Tensor) -> torch.Tensor:
         return rgb_to_scalar_field(rgb, "gray", self.in_range)
+
+
+# Field pairs for the translation tasks, named by the two domains. `--preset`
+# selects one; --field-A / --field-B / --field-combine override any part of it.
+#
+#   he-ki67  Ki67 is DAB with a hematoxylin counterstain, so domain B merges
+#            both to get *all* nuclei rather than only the positive ones, and
+#            domain A uses hematoxylin to match.
+#   he-sr    Sirius Red marks collagen, and eosin is the H&E channel that picks
+#            up the same collagen-rich stroma, so the pair is E <-> the target's
+#            chromogen channel.
+FIELD_PRESETS = {
+    "he-ki67": {"field_A": "hematoxylin", "field_B": "dab+hematoxylin", "combine": "max"},
+    "he-sr":   {"field_A": "eosin",       "field_B": "dab",             "combine": "max"},
+}
+
+
+def resolve_fields(preset: str, field_A=None, field_B=None, combine=None) -> dict:
+    """Preset values, with any explicitly-given field overriding them."""
+    if preset not in FIELD_PRESETS:
+        raise ValueError("unknown preset %r; choose from %s"
+                         % (preset, ", ".join(sorted(FIELD_PRESETS))))
+    resolved = dict(FIELD_PRESETS[preset])
+    for key, value in (("field_A", field_A), ("field_B", field_B), ("combine", combine)):
+        if value is not None:
+            resolved[key] = value
+    return resolved

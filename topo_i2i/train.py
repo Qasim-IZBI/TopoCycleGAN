@@ -20,7 +20,7 @@ from i2i_stain_zoo.datasets.transforms import default_train_transform
 from i2i_stain_zoo.datasets.unpaired_dataset import UnpairedDataset
 from i2i_stain_zoo.trainer.base_trainer import BaseTrainer
 
-from topo_i2i.fields import STAIN_VECTORS
+from topo_i2i.fields import FIELD_PRESETS, STAIN_VECTORS, resolve_fields
 from topo_i2i.models import TopoConfig, TopoCycleGAN, TopoCycleGANConfig
 
 
@@ -46,14 +46,17 @@ def build_parser() -> argparse.ArgumentParser:
                    help="weight on the cycle-topology terms (L_PH-cyc,H + L_PH-cyc,I)")
     g.add_argument("--lambda-ph-trans", type=float, default=1.0,
                    help="weight on the translation terms (L_PH-trans,H + L_PH-trans,I)")
-    g.add_argument("--field-A", default="hematoxylin", metavar="SPEC",
+    g.add_argument("--preset", default="he-ki67", choices=sorted(FIELD_PRESETS),
+                   help="which stain channels each domain is deconvolved onto: "
+                        + "; ".join("%s -> %s / %s" % (k, v["field_A"], v["field_B"])
+                                    for k, v in sorted(FIELD_PRESETS.items())))
+    g.add_argument("--field-A", default=None, metavar="SPEC",
                    help="scalar field for the H&E domain: 'gray', one stain "
                         "name, or 'a+b' to deconvolve a pair and merge it "
                         "(known stains: %s)" % ", ".join(sorted(STAIN_VECTORS)))
-    g.add_argument("--field-B", default="dab+hematoxylin", metavar="SPEC",
-                   help="scalar field for the IHC domain (default merges DAB "
-                        "with the hematoxylin counterstain)")
-    g.add_argument("--field-combine", default="max", choices=("max", "sum", "mean"),
+    g.add_argument("--field-B", default=None, metavar="SPEC",
+                   help="override the preset's domain-B field")
+    g.add_argument("--field-combine", default=None, choices=("max", "sum", "mean"),
                    help="how an 'a+b' field merges its two channels")
     g.add_argument("--topo-dims", type=int, nargs="+", default=[0, 1],
                    help="homology dimensions: 0 components, 1 loops")
@@ -80,13 +83,17 @@ def main() -> None:
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True,
                         num_workers=args.num_workers, pin_memory=True)
 
+    fields = resolve_fields(args.preset, args.field_A, args.field_B, args.field_combine)
+    print("[fields] preset=%s  A=%s  B=%s  combine=%s"
+          % (args.preset, fields["field_A"], fields["field_B"], fields["combine"]))
+
     cfg = TopoCycleGANConfig(topo=TopoConfig(
         lambda_topo=args.lambda_topo,
         lambda_ph_cyc=args.lambda_ph_cyc,
         lambda_ph_trans=args.lambda_ph_trans,
-        field_A=args.field_A,
-        field_B=args.field_B,
-        combine=args.field_combine,
+        field_A=fields["field_A"],
+        field_B=fields["field_B"],
+        combine=fields["combine"],
         dims=tuple(args.topo_dims),
         every_n_steps=args.topo_every,
         max_images=args.topo_max_images,

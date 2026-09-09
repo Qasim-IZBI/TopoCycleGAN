@@ -23,6 +23,7 @@
 # Submit:   sbatch slurm/train_sweep.sh
 # One cell: sbatch --array=4 slurm/train_sweep.sh
 # Baseline: sbatch --array=0 --export=ALL,LAMBDA_TOPO=0 slurm/train_sweep.sh
+# H&E->SR:  sbatch --export=ALL,PRESET=he-sr slurm/train_sweep.sh
 
 set -euo pipefail
 
@@ -39,13 +40,11 @@ STEPS=${STEPS:-100000}
 BATCH_SIZE=${BATCH_SIZE:-4}
 IMAGE_SIZE=${IMAGE_SIZE:-256}
 LAMBDA_TOPO=${LAMBDA_TOPO:-1.0}
-FIELD_A=${FIELD_A:-hematoxylin}
-FIELD_B=${FIELD_B:-dab+hematoxylin}
-FIELD_COMBINE=${FIELD_COMBINE:-max}
+PRESET=${PRESET:-he-ki67}          # he-ki67 (H / H+DAB) or he-sr (E / DAB)
 TOPO_DOWNSAMPLE=${TOPO_DOWNSAMPLE:-2}
 TOPO_EVERY=${TOPO_EVERY:-1}
 
-RUN_NAME="cyc${PH_CYC}_trans${PH_TRANS}"
+RUN_NAME="${PRESET}_cyc${PH_CYC}_trans${PH_TRANS}"
 OUTPUT="${RUNS}/${RUN_NAME}"
 
 # --- environment: replace with whatever your cluster uses ---------------- #
@@ -75,9 +74,7 @@ srun topo-train \
   --lambda-topo "$LAMBDA_TOPO" \
   --lambda-ph-cyc "$PH_CYC" \
   --lambda-ph-trans "$PH_TRANS" \
-  --field-A "$FIELD_A" \
-  --field-B "$FIELD_B" \
-  --field-combine "$FIELD_COMBINE" \
+  --preset "$PRESET" \
   --topo-downsample "$TOPO_DOWNSAMPLE" \
   --topo-every "$TOPO_EVERY"
 
