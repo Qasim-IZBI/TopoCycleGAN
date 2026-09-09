@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "topo-i2i"
+version = "0.1.0"
+description = "TopoGAN-style topological loss for unpaired virtual staining, on top of I2I-Stain-Zoo"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Qasim Siddiqui" }]
+
+# torch is deliberately unpinned: install the build matching your CUDA version
+# from pytorch.org first. The zoo is pinned to a commit so results stay
+# reproducible when its main branch moves.
+dependencies = [
+    "torch>=2.0",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "pillow>=10.0",
+    "gudhi>=3.8",
+    "i2i-stain-zoo @ git+https://github.com/HoehmeLab/I2I-Stain-Zoo@82722e416b3a37ba97e9e71723cfc7718615c6fd",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
+[project.scripts]
+topo-train = "topo_i2i.train:main"
+
+[tool.setuptools.packages.find]
+include = ["topo_i2i*"]

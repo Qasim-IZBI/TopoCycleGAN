@@ -1,0 +1,285 @@
+"""Tests for the topological loss. Run: pytest -q"""
+
+import numpy as np
+import pytest
+import torch
+
+from topo_i2i.fields import StainField, rgb_to_scalar_field
+from topo_i2i.losses import diagram_distance, topological_loss
+from topo_i2i.persistence import persistence_diagram
+
+gudhi = pytest.importorskip("gudhi")
+
+
+def one_hole():
+    """A 3x3 well: four 0-valued corners and a single loop born at 3, dying at 5."""
+    return torch.tensor([[0., 3., 0.], [3., 5., 3.], [0., 3., 0.]], dtype=torch.float64)
+
+
+def test_diagram_matches_gudhi():
+    dgm = persistence_diagram(one_hole(), dims=(0, 1))
+    # Three finite 0-dim pairs (the fourth component is essential and dropped).
+    assert dgm[0].shape == (3, 2)
+    assert torch.allclose(dgm[0], torch.tensor([[0., 3.], [0., 3.], [0., 3.]], dtype=torch.float64))
+    # One loop, born when the ring closes at 3, filled at 5.
+    assert dgm[1].shape == (1, 2)
+    assert torch.allclose(dgm[1][0], torch.tensor([3., 5.], dtype=torch.float64))
+
+
+def test_gradient_reaches_critical_pixels():
+    f = one_hole().clone().requires_grad_(True)
+    dgm = persistence_diagram(f, dims=(0, 1))
+    dgm[1][:, 0].sum().backward()          # d(birth of the loop)/d(field)
+    grad = f.grad
+    assert grad is not None
+    # Exactly one pixel -- a saddle on the ring, value 3 -- carries the gradient.
+    assert grad.abs().sum() == pytest.approx(1.0)
+    assert f.detach().reshape(-1)[grad.reshape(-1).nonzero()[0, 0]] == 3.0
+
+
+def test_identical_fields_have_zero_distance():
+    d = persistence_diagram(one_hole(), dims=(0, 1))
+    assert diagram_distance(d, d, dims=(0, 1)).item() == pytest.approx(0.0)
+
+
+def test_distance_is_positive_for_different_topology():
+    flat = torch.zeros(3, 3, dtype=torch.float64)
+    d_hole = persistence_diagram(one_hole(), dims=(0, 1))
+    d_flat = persistence_diagram(flat, dims=(0, 1))
+    assert diagram_distance(d_hole, d_flat, dims=(0, 1)).item() > 0
+
+
+def test_topological_loss_batch_and_backward():
+    torch.manual_seed(0)
+    fake = torch.rand(2, 16, 16, dtype=torch.float64, requires_grad=True)
+    real = torch.rand(3, 16, 16, dtype=torch.float64)
+    loss = topological_loss(fake, real, dims=(0, 1))
+    assert loss.ndim == 0 and loss.item() >= 0
+    loss.backward()
+    assert fake.grad is not None and fake.grad.abs().sum() > 0
+
+
+def test_loss_is_zero_against_itself():
+    torch.manual_seed(1)
+    x = torch.rand(2, 12, 12, dtype=torch.float64)
+    assert topological_loss(x, x.clone(), dims=(0, 1)).item() == pytest.approx(0.0)
+
+
+def test_real_side_is_detached():
+    fake = torch.rand(1, 8, 8, dtype=torch.float64, requires_grad=True)
+    real = torch.rand(1, 8, 8, dtype=torch.float64, requires_grad=True)
+    topological_loss(fake, real, dims=(0,)).backward()
+    assert real.grad is None
+
+
+def test_stain_field_shape_and_polarity():
+    # A dark (strongly stained) pixel must give a higher OD than a white one.
+    rgb = torch.zeros(1, 3, 4, 4)
+    rgb[..., 0, 0] = -1.0   # black  -> high OD
+    rgb[..., 1, 1] = 1.0    # white  -> ~0 OD
+    f = StainField("hematoxylin")(rgb)
+    assert f.shape == (1, 4, 4)
+    assert f[0, 0, 0] > f[0, 1, 1]
+
+
+def test_gray_field_shape():
+    assert rgb_to_scalar_field(torch.zeros(2, 3, 8, 8), "gray").shape == (2, 8, 8)
+
+
+# --- cycle-topology (paired) term ---------------------------------------- #
+
+def test_paired_loss_is_zero_for_identical_batches():
+    from topo_i2i.losses import paired_topological_loss
+    torch.manual_seed(2)
+    x = torch.rand(3, 12, 12, dtype=torch.float64)
+    assert paired_topological_loss(x, x.clone(), dims=(0, 1)).item() == pytest.approx(0.0)
+
+
+def test_paired_loss_pairs_by_index_not_by_matching():
+    """Swapping the order of the second batch must change a paired loss."""
+    from topo_i2i.losses import paired_topological_loss, topological_loss
+    torch.manual_seed(3)
+    a = torch.rand(2, 10, 10, dtype=torch.float64)
+    b = torch.rand(2, 10, 10, dtype=torch.float64)
+    b_swapped = b.flip(0)
+    paired = paired_topological_loss(a, b, dims=(0, 1)).item()
+    paired_swapped = paired_topological_loss(a, b_swapped, dims=(0, 1)).item()
+    assert paired != pytest.approx(paired_swapped)
+    # the matched (OT) loss is order-invariant, which is the whole difference
+    m = topological_loss(a, b, dims=(0, 1)).item()
+    m_swapped = topological_loss(a, b_swapped, dims=(0, 1)).item()
+    assert m == pytest.approx(m_swapped)
+
+
+def test_paired_loss_rejects_unequal_lengths():
+    from topo_i2i.losses import paired_diagram_loss
+    with pytest.raises(ValueError):
+        paired_diagram_loss([{}, {}], [{}], dims=(0,))
+
+
+# --- the four-term model ------------------------------------------------- #
+
+zoo = pytest.importorskip("i2i_stain_zoo")
+
+
+def _model(**topo_kwargs):
+    from topo_i2i.models import TopoCycleGAN, TopoCycleGANConfig, TopoConfig
+    torch.manual_seed(0)
+    return TopoCycleGAN(TopoCycleGANConfig(
+        n_blocks=1, ngf=8, ndf=8, topo=TopoConfig(**topo_kwargs)))
+
+
+def _batch(n=2, size=32):
+    torch.manual_seed(1)
+    return {"A": torch.rand(n, 3, size, size) * 2 - 1,
+            "B": torch.rand(n, 3, size, size) * 2 - 1}
+
+
+def test_all_four_terms_are_computed_and_logged():
+    model = _model(downsample=2)
+    loss, logs, _ = model.compute_generator_loss(_batch())
+    for k in ("loss_ph_cyc_H", "loss_ph_cyc_I", "loss_ph_trans_H", "loss_ph_trans_I"):
+        assert k in logs and logs[k] > 0, k
+    loss.backward()
+    assert any(p.grad is not None and p.grad.abs().sum() > 0
+               for p in model.generator_parameters())
+
+
+def test_term_weights_switch_families_off():
+    m = _model(downsample=2, lambda_ph_cyc=0.0)
+    _, logs, _ = m.compute_generator_loss(_batch())
+    assert logs["loss_ph_cyc_H"] == 0.0 and logs["loss_ph_trans_H"] > 0
+
+    m = _model(downsample=2, lambda_ph_trans=0.0)
+    _, logs, _ = m.compute_generator_loss(_batch())
+    assert logs["loss_ph_trans_H"] == 0.0 and logs["loss_ph_cyc_H"] > 0
+
+
+def test_lambda_topo_zero_is_the_baseline():
+    m = _model(lambda_topo=0.0)
+    _, logs, _ = m.compute_generator_loss(_batch())
+    assert logs["loss_topo"] == 0.0
+
+
+def test_every_n_steps_skips():
+    m = _model(downsample=2, every_n_steps=3)
+    seen = []
+    for _ in range(3):
+        _, logs, _ = m.compute_generator_loss(_batch())
+        seen.append(logs["loss_topo"])
+    assert seen[0] == 0.0 and seen[1] == 0.0 and seen[2] > 0
+
+
+def test_domains_use_different_stain_fields():
+    m = _model(downsample=2)
+    rgb = torch.rand(1, 3, 16, 16) * 2 - 1
+    assert not torch.allclose(m._to_field(rgb, "A"), m._to_field(rgb, "B"))
+
+
+# --- combined (deconvolved) fields --------------------------------------- #
+
+def test_deconvolution_recovers_known_concentrations():
+    """A synthetic image built from known H and DAB amounts must deconvolve back."""
+    from topo_i2i.fields import DeconvolutionField, STAIN_VECTORS
+    import numpy as np
+    v_h = np.array(STAIN_VECTORS["hematoxylin"]); v_h /= np.linalg.norm(v_h)
+    v_d = np.array(STAIN_VECTORS["dab"]);         v_d /= np.linalg.norm(v_d)
+    c_h, c_d = 0.8, 0.3
+    od = c_h * v_h + c_d * v_d
+    rgb01 = np.power(10.0, -od)
+    rgb = torch.tensor(rgb01, dtype=torch.float32).view(1, 3, 1, 1) * 2 - 1
+
+    assert DeconvolutionField(("hematoxylin", "dab"), "max")(rgb).item() == pytest.approx(0.8, abs=2e-2)
+    assert DeconvolutionField(("hematoxylin", "dab"), "sum")(rgb).item() == pytest.approx(1.1, abs=2e-2)
+    assert DeconvolutionField(("hematoxylin", "dab"), "mean")(rgb).item() == pytest.approx(0.55, abs=2e-2)
+
+
+def test_combined_field_differs_from_single_stain():
+    from topo_i2i.fields import make_field
+    torch.manual_seed(0)
+    rgb = torch.rand(1, 3, 8, 8) * 2 - 1
+    dab_only = make_field("dab")(rgb)
+    combined = make_field("dab+hematoxylin", "max")(rgb)
+    assert combined.shape == dab_only.shape
+    assert not torch.allclose(combined, dab_only)
+
+
+def test_combined_field_is_differentiable():
+    from topo_i2i.fields import make_field
+    rgb = (torch.rand(1, 3, 8, 8) * 2 - 1).requires_grad_(True)
+    make_field("dab+hematoxylin", "max")(rgb).sum().backward()
+    assert rgb.grad is not None and rgb.grad.abs().sum() > 0
+
+
+def test_make_field_dispatch():
+    from topo_i2i.fields import make_field, DeconvolutionField, StainField, _GrayField
+    assert isinstance(make_field("gray"), _GrayField)
+    assert isinstance(make_field("dab"), StainField)
+    assert isinstance(make_field("dab+hematoxylin"), DeconvolutionField)
+
+
+def test_model_uses_combined_field_for_ihc_by_default():
+    from topo_i2i.fields import DeconvolutionField
+    m = _model(downsample=2)
+    assert isinstance(m._field_mods["B"], DeconvolutionField)
+    _, logs, _ = m.compute_generator_loss(_batch())
+    assert logs["loss_ph_trans_I"] > 0
+
+
+# --- trans terms are paired source-vs-own-translation --------------------- #
+
+def test_trans_terms_follow_the_data_not_the_index():
+    """Permuting domain B permutes fake_A with it, so the paired sum is invariant.
+
+    This is the property that makes the term well-defined: image i is compared
+    with what was generated *from image i*, so relabelling the batch cannot
+    change the loss. (The underlying diagram distance is order-sensitive --
+    see test_paired_loss_pairs_by_index_not_by_matching -- it is the pairing
+    that tracks the data.)
+    """
+    b = _batch(n=2)
+    m1 = _model(downsample=2, lambda_ph_cyc=0.0)
+    _, logs, _ = m1.compute_generator_loss(b)
+    m2 = _model(downsample=2, lambda_ph_cyc=0.0)
+    _, logs2, _ = m2.compute_generator_loss({"A": b["A"], "B": b["B"].flip(0)})
+    assert logs["loss_ph_trans_I"] == pytest.approx(logs2["loss_ph_trans_I"], rel=1e-5)
+
+
+def test_trans_H_compares_across_domains():
+    """trans_H must read field A on the source and field B on the translation."""
+    from topo_i2i.losses import paired_diagram_loss
+    from topo_i2i.persistence import batch_diagrams
+    m = _model(downsample=2, lambda_ph_cyc=0.0)
+    b = _batch(n=2)
+    _, logs, visuals = m.compute_generator_loss(b)
+
+    dims = tuple(m.topo_cfg.dims)
+    expected = paired_diagram_loss(
+        batch_diagrams(m._to_field(visuals["fake_B"], "B"), dims),   # H+DAB(y_hat)
+        batch_diagrams(m._to_field(b["A"].detach(), "A"), dims),     # H(x)
+        dims)
+    assert logs["loss_ph_trans_H"] == pytest.approx(float(expected.detach()), rel=1e-5)
+
+
+def test_trans_I_compares_across_domains():
+    from topo_i2i.losses import paired_diagram_loss
+    from topo_i2i.persistence import batch_diagrams
+    m = _model(downsample=2, lambda_ph_cyc=0.0)
+    b = _batch(n=2)
+    _, logs, visuals = m.compute_generator_loss(b)
+
+    dims = tuple(m.topo_cfg.dims)
+    expected = paired_diagram_loss(
+        batch_diagrams(m._to_field(visuals["fake_A"], "A"), dims),   # H(x'_hat)
+        batch_diagrams(m._to_field(b["B"].detach(), "B"), dims),     # H+DAB(y')
+        dims)
+    assert logs["loss_ph_trans_I"] == pytest.approx(float(expected.detach()), rel=1e-5)
+
+
+def test_trans_gradient_reaches_the_generator():
+    m = _model(downsample=2, lambda_ph_cyc=0.0)
+    loss, logs, _ = m.compute_generator_loss(_batch())
+    assert logs["loss_ph_trans_H"] > 0 and logs["loss_ph_trans_I"] > 0
+    loss.backward()
+    assert any(p.grad is not None and p.grad.abs().sum() > 0
+               for p in m.generator_parameters())
