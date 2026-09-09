@@ -60,9 +60,9 @@ class TopoConfig:
     lambda_ph_cyc: float = 1.0     # cycle topology (self-consistency)
     lambda_ph_trans: float = 1.0    # distribution topology (TopoGAN-style OT)
 
-    # Stain-specific scalar fields, one per domain. Estimate real vectors from
-    # your slides with qupath_stains.estimate_stains rather than trusting the
-    # defaults in fields.STAIN_VECTORS.
+    # Stain-specific scalar fields, one per domain. The defaults in
+    # fields.STAIN_VECTORS are literature values; estimate the real vectors from
+    # your own slides (QuPath: Analyze > Estimate stain vectors > Auto) first.
     # A single name projects onto that stain vector; 'a+b' deconvolves the pair
     # properly and merges the two channels with `combine`. For IHC, DAB alone
     # sees only the positive nuclei, so DAB+hematoxylin (all nuclei, positive

@@ -25,8 +25,9 @@ STAIN_VECTORS = {
     "hematoxylin": (0.65, 0.70, 0.29),
     "eosin": (0.2159, 0.8012, 0.5581),
     "dab": (0.27, 0.57, 0.78),
-    # Sirius Red picks up collagen; estimate this from your own slides with
-    # qupath_stains.estimate_stains and pass the result explicitly.
+    # Sirius Red picks up collagen. These are literature values -- estimate the
+    # real vectors from your own slides (QuPath: Analyze > Estimate stain
+    # vectors > Auto) and replace them.
     "sirius_red": (0.36, 0.66, 0.66),
 }
 

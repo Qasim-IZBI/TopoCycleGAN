@@ -152,6 +152,10 @@ The loss has no dependency on the zoo:
 from topo_i2i import topological_loss, rgb_to_scalar_field
 ```
 
-`qupath_stains.py` (separate, in this repo) does QuPath-style stain estimation
-and deconvolution, and is what you'd use to get a real Sirius Red stain vector
-for `fields.STAIN_VECTORS`.
+The vectors in `fields.STAIN_VECTORS` are literature values. Estimate the real
+ones from your own slides — QuPath's *Analyze > Estimate stain vectors > Auto* —
+and replace them before training; the deconvolution is only as good as those
+numbers.
+
+(A standalone Python reimplementation of that QuPath command, `qupath_stains.py`,
+was removed in the commit following `b7aca07`; recover it from there if useful.)
