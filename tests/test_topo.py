@@ -320,3 +320,61 @@ def test_preset_fields_are_all_constructible():
         for key in ("field_A", "field_B"):
             f = make_field(spec[key], spec["combine"])(rgb)
             assert f.shape == (1, 8, 8), (name, key)
+
+
+# --- diagram projections -------------------------------------------------- #
+
+def test_default_projection_is_lifetime_for_h0_birth_for_h1():
+    from topo_i2i.losses import DEFAULT_PROJECTION, _resolve_projection
+    assert DEFAULT_PROJECTION == {0: "lifetime", 1: "birth"}
+    assert _resolve_projection(None, 0) == "lifetime"
+    assert _resolve_projection(None, 1) == "birth"
+    # a plain string forces one projection everywhere
+    assert _resolve_projection("birth", 0) == "birth"
+    # a mapping may override only some dimensions
+    assert _resolve_projection({0: "death"}, 0) == "death"
+    assert _resolve_projection({0: "death"}, 1) == "birth"
+
+
+def test_projections_give_the_expected_values():
+    from topo_i2i.losses import _project
+    dgm = {0: torch.tensor([[1.0, 4.0], [2.0, 3.0]])}
+    assert torch.allclose(_project(dgm, 0, "birth"), torch.tensor([1.0, 2.0]))
+    assert torch.allclose(_project(dgm, 0, "death"), torch.tensor([4.0, 3.0]))
+    assert torch.allclose(_project(dgm, 0, "lifetime"), torch.tensor([3.0, 1.0]))
+    with pytest.raises(ValueError, match="projection must be"):
+        _project(dgm, 0, "nonsense")
+
+
+def test_projection_changes_the_distance():
+    d_hole = persistence_diagram(one_hole(), dims=(0, 1))
+    flat = persistence_diagram(torch.zeros(3, 3, dtype=torch.float64), dims=(0, 1))
+    by_birth = diagram_distance(d_hole, flat, (0, 1), projection="birth").item()
+    by_life = diagram_distance(d_hole, flat, (0, 1), projection="lifetime").item()
+    # H0 of one_hole: three (0,3) pairs -> births all 0, lifetimes all 3
+    assert by_birth != pytest.approx(by_life)
+    assert by_life > 0
+
+
+def test_identical_diagrams_are_zero_under_every_projection():
+    d = persistence_diagram(one_hole(), dims=(0, 1))
+    for proj in ("birth", "lifetime", "death", None):
+        assert diagram_distance(d, d, (0, 1), projection=proj).item() == pytest.approx(0.0)
+
+
+def test_lifetime_projection_is_differentiable():
+    f = one_hole().clone().requires_grad_(True)
+    d = persistence_diagram(f, dims=(0, 1))
+    flat = persistence_diagram(torch.zeros(3, 3, dtype=torch.float64), dims=(0, 1))
+    diagram_distance(d, flat, (0, 1), projection="lifetime").backward()
+    # lifetime uses both endpoints, so gradient reaches more pixels than birth-only
+    assert f.grad is not None and (f.grad.abs() > 0).sum() > 0
+
+
+def test_model_projection_flag_changes_the_loss():
+    a = _model(downsample=2, projection="auto")
+    b = _model(downsample=2, projection="birth")
+    batch = _batch()
+    _, la, _ = a.compute_generator_loss(batch)
+    _, lb, _ = b.compute_generator_loss(batch)
+    assert la["loss_topo"] != pytest.approx(lb["loss_topo"])

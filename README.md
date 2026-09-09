@@ -124,6 +124,40 @@ Two deviations from the paper, both deliberate:
   batch sizes the LP optimum is a permutation, so the assignment problem is
   equivalent and drops the POT dependency.
 
+## Which projection
+
+The diagram distance compares a 1-D projection of each diagram (TopoGAN Eq. 3
+projects onto the birth axis, which is what reduces the matching to a sort).
+`--topo-projection` chooses it:
+
+| value | H0 | H1 |
+|---|---|---|
+| `auto` (default) | lifetime | birth |
+| `birth` / `lifetime` / `death` | forced for every dimension | |
+
+`auto` splits them deliberately. TopoGAN justifies dropping death times for
+**H1**: on a distance transform a loop's birth is the gap that must be closed to
+complete an almost-hole. That argument does not carry to **H0** on a stain field,
+where a component's birth is just the value of a local minimum — birth-only would
+compare peak stain intensities. Its lifetime instead measures how deep a blob is
+before merging into its neighbour, which is the connectivity structure H0 is
+meant to capture, and is the usual TDA robustness measure (noise gives
+short-lived features).
+
+Using deaths costs nothing measurable: gudhi already returns both endpoints of
+every pair, so this is one extra subtraction reusing the same sort (0.26 ms vs
+0.20 ms per call, against a ~30 ms persistence computation). Gradients flow the
+same way and reach *more* pixels, since each pair now feeds both its birth and
+its death pixel.
+
+Note the zero-padding that matches unmatched points to the diagonal is exact for
+`birth` and `lifetime` (a diagonal point has lifetime 0) but not for `death`,
+which is offered for experiments rather than as a metric.
+
+Full 2-D Wasserstein between diagrams is deliberately not offered: it makes the
+matching a genuine assignment problem, measured at ~500 ms per pair against
+0.2 ms, which is why TopoGAN projects to one axis in the first place.
+
 ## Cost
 
 Persistence is CPU-bound and unbatched, and there are now six fields to diagram

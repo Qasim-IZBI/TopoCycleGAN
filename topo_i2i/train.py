@@ -60,6 +60,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="how an 'a+b' field merges its two channels")
     g.add_argument("--topo-dims", type=int, nargs="+", default=[0, 1],
                    help="homology dimensions: 0 components, 1 loops")
+    g.add_argument("--topo-projection", default="auto",
+                   choices=("auto", "birth", "lifetime", "death"),
+                   help="which 1-D projection of the diagrams to compare; "
+                        "'auto' uses lifetime for H0 and birth for H1")
     g.add_argument("--topo-every", type=int, default=1,
                    help="compute the PH terms every n-th step (cost control)")
     g.add_argument("--topo-max-images", type=int, default=0,
@@ -95,6 +99,7 @@ def main() -> None:
         field_B=fields["field_B"],
         combine=fields["combine"],
         dims=tuple(args.topo_dims),
+        projection=args.topo_projection,
         every_n_steps=args.topo_every,
         max_images=args.topo_max_images,
         downsample=args.topo_downsample,

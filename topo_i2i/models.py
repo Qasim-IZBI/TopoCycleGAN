@@ -47,7 +47,7 @@ import torch
 from i2i_stain_zoo.models import CycleGAN, CycleGANConfig
 
 from topo_i2i.fields import make_field
-from topo_i2i.losses import paired_diagram_loss
+from topo_i2i.losses import DEFAULT_PROJECTION, paired_diagram_loss
 from topo_i2i.persistence import batch_diagrams
 
 
@@ -74,6 +74,11 @@ class TopoConfig:
     # 0 = connected components, 1 = loops. TopoGAN focuses on 1; for nuclei,
     # 0 usually carries more signal. Both to start.
     dims: Tuple[int, ...] = (0, 1)
+
+    # Which 1-D projection of the diagrams to compare. 'auto' uses
+    # losses.DEFAULT_PROJECTION -- lifetime for H0, birth for H1 -- while
+    # 'birth', 'lifetime' or 'death' force one for every dimension.
+    projection: str = "auto"
 
     # Cost control -- persistence is CPU-bound and unbatched, and there are now
     # six fields per step to diagram.
@@ -139,6 +144,7 @@ class TopoLossMixin:
             return zero, logs
 
         dims = tuple(cfg.dims)
+        proj = None if cfg.projection == "auto" else cfg.projection
         # Each real-domain diagram set is used twice; compute it once.
         dgm_real_A = self._diagrams(batch["A"], "A", detach=True)
         dgm_real_B = self._diagrams(batch["B"], "B", detach=True)
@@ -148,8 +154,8 @@ class TopoLossMixin:
         if cfg.lambda_ph_cyc != 0:
             dgm_rec_A = self._diagrams(visuals["rec_A"], "A", detach=False)
             dgm_rec_B = self._diagrams(visuals["rec_B"], "B", detach=False)
-            cyc_H = paired_diagram_loss(dgm_rec_A, dgm_real_A, dims)
-            cyc_I = paired_diagram_loss(dgm_rec_B, dgm_real_B, dims)
+            cyc_H = paired_diagram_loss(dgm_rec_A, dgm_real_A, dims, projection=proj)
+            cyc_I = paired_diagram_loss(dgm_rec_B, dgm_real_B, dims, projection=proj)
             total = total + cfg.lambda_ph_cyc * (cyc_H + cyc_I)
             logs["loss_ph_cyc_H"] = float(cyc_H.detach().cpu())
             logs["loss_ph_cyc_I"] = float(cyc_I.detach().cpu())
@@ -157,10 +163,10 @@ class TopoLossMixin:
         if cfg.lambda_ph_trans != 0:
             # Forward: the H&E source anchors its own translation into IHC.
             dgm_fake_B = self._diagrams(visuals["fake_B"], "B", detach=False)
-            trans_H = paired_diagram_loss(dgm_fake_B, dgm_real_A, dims)
+            trans_H = paired_diagram_loss(dgm_fake_B, dgm_real_A, dims, projection=proj)
             # Reverse: the IHC source anchors its own translation into H&E.
             dgm_fake_A = self._diagrams(visuals["fake_A"], "A", detach=False)
-            trans_I = paired_diagram_loss(dgm_fake_A, dgm_real_B, dims)
+            trans_I = paired_diagram_loss(dgm_fake_A, dgm_real_B, dims, projection=proj)
             total = total + cfg.lambda_ph_trans * (trans_H + trans_I)
             logs["loss_ph_trans_H"] = float(trans_H.detach().cpu())
             logs["loss_ph_trans_I"] = float(trans_I.detach().cpu())
