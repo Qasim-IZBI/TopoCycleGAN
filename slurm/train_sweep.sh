@@ -19,13 +19,17 @@
 # Baseline: sbatch --array=0 --export=ALL,LAMBDA_TOPO=0 slurm/train_sweep.sh
 # H&E->SR:  sbatch --export=ALL,PRESET=he-sr slurm/train_sweep.sh
 
-set -euo pipefail
+set -eo pipefail
 
 module purge
 module load Anaconda3/2025.06-1
 
 eval "$(conda shell.bash hook)"
+# conda's activate scripts reference unset variables, so -u has to come off
+# across the activation and back on for the rest of the script.
+set +u
 conda activate "${CONDA_ENV:-topocg}"
+set -u
 
 echo "Host: $(hostname)"
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-none}"
@@ -37,7 +41,8 @@ export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128
 # the GPU idles. Keep BLAS to one thread so it does not fight the dataloader.
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
-NUM_WORKERS=$(( SLURM_CPUS_PER_TASK > 2 ? SLURM_CPUS_PER_TASK - 2 : 1 ))
+CPUS=${SLURM_CPUS_PER_TASK:-8}
+NUM_WORKERS=$(( CPUS > 2 ? CPUS - 2 : 1 ))
 
 # -----------------------------
 # Helper: echo and run a command
@@ -60,7 +65,7 @@ run_cmd() {
 #   3: cyc=0.5  trans=0.25    8: cyc=1    trans=1
 #   4: cyc=0.5  trans=0.5
 # -----------------------------
-TASK_ID=${SLURM_ARRAY_TASK_ID}
+TASK_ID=${SLURM_ARRAY_TASK_ID:?submit with sbatch -- there is no array index to sweep over}
 
 LAMBDAS=(0.25 0.5 1)
 PH_CYC=${LAMBDAS[$(( TASK_ID / 3 ))]}
@@ -77,7 +82,9 @@ LAMBDA_TOPO=${LAMBDA_TOPO:-1.0}
 TOPO_DOWNSAMPLE=${TOPO_DOWNSAMPLE:-1}
 TOPO_EVERY=${TOPO_EVERY:-1}
 TOPO_START=${TOPO_START:-100000}    # let the GAN find its footing first
-TOPO_WARMUP=${TOPO_WARMUP:-5000}    # then ramp the PH weight in over 5k steps
+TOPO_WARMUP=${TOPO_WARMUP:-50000}   # then ramp the PH weight in over 50k steps,
+                                    # keeping the ramp at half the start step as
+                                    # before (was 5k after 10k)
 
 echo "TASK_ID=${TASK_ID}"
 echo "PRESET=${PRESET}"
