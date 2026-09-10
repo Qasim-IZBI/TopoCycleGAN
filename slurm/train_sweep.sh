@@ -1,24 +1,18 @@
 #!/bin/bash
-#SBATCH --job-name=topo-sweep
-#SBATCH --array=0-8
-#SBATCH --output=logs/%x_%A_%a.out
-#SBATCH --error=logs/%x_%A_%a.err
-#SBATCH --time=24:00:00
-#SBATCH --gres=gpu:1
+#SBATCH --job-name=topo_sweep
+#SBATCH --output=logs_topo/topo_%A_%a.out
+#SBATCH --error=logs_topo/topo_%A_%a.err
+
+#SBATCH --time=48:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-# --- adjust for your cluster -------------------------------------------- #
-# #SBATCH --partition=gpu
-# #SBATCH --account=<your-account>
-# #SBATCH --mail-type=END,FAIL
-# #SBATCH --mail-user=<you>
-# ------------------------------------------------------------------------ #
+#SBATCH --partition=clara
+#SBATCH --ntasks=1
+#SBATCH --gres=gpu:1
+#SBATCH --array=0-8   # 9 jobs = 3 lambda_ph_cyc x 3 lambda_ph_trans
 
-# 3x3 sweep over the two persistent-homology weights.
-#   task id -> (lambda_ph_cyc, lambda_ph_trans)
-#   0:(.25,.25) 1:(.25,.5) 2:(.25,1)
-#   3:(.5 ,.25) 4:(.5 ,.5) 5:(.5 ,1)
-#   6:(1  ,.25) 7:(1  ,.5) 8:(1  ,1)
+# NOTE: SLURM will not create logs_topo/ for you -- `mkdir -p logs_topo` once
+# before the first sbatch, or the jobs fail with no output to tell you why.
 #
 # Submit:   sbatch slurm/train_sweep.sh
 # One cell: sbatch --array=4 slurm/train_sweep.sh
@@ -27,59 +21,103 @@
 
 set -euo pipefail
 
-LAMBDAS=(0.25 0.5 1)
-i=${SLURM_ARRAY_TASK_ID:?run this with sbatch, not bash}
-PH_CYC=${LAMBDAS[$((i / 3))]}
-PH_TRANS=${LAMBDAS[$((i % 3))]}
+module purge
+module load Anaconda3/2025.06-1
 
-# --- paths and knobs: override at submit time with --export ------------- #
-DATA_A=${DATA_A:-$PWD/tiles/HE}
-DATA_B=${DATA_B:-$PWD/tiles/IHC}
-RUNS=${RUNS:-$PWD/runs}
+eval "$(conda shell.bash hook)"
+conda activate "${CONDA_ENV:-topocg}"
+
+echo "Host: $(hostname)"
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-none}"
+nvidia-smi || true   # diagnostics must never kill a 48h job under `set -e`
+
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128
+
+# Persistent homology is CPU-bound and single-threaded per image, and runs while
+# the GPU idles. Keep BLAS to one thread so it does not fight the dataloader.
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+NUM_WORKERS=$(( SLURM_CPUS_PER_TASK > 2 ? SLURM_CPUS_PER_TASK - 2 : 1 ))
+
+# -----------------------------
+# Helper: echo and run a command
+# -----------------------------
+run_cmd() {
+    echo "Running command:"
+    printf ' %q' "$@"
+    echo
+    "$@"
+}
+
+# -----------------------------
+# Axes
+# lambda_ph_trans varies fastest, lambda_ph_cyc slowest.
+#
+# Job layout:
+#   0: cyc=0.25 trans=0.25    5: cyc=0.5  trans=1
+#   1: cyc=0.25 trans=0.5     6: cyc=1    trans=0.25
+#   2: cyc=0.25 trans=1       7: cyc=1    trans=0.5
+#   3: cyc=0.5  trans=0.25    8: cyc=1    trans=1
+#   4: cyc=0.5  trans=0.5
+# -----------------------------
+TASK_ID=${SLURM_ARRAY_TASK_ID}
+
+LAMBDAS=(0.25 0.5 1)
+PH_CYC=${LAMBDAS[$(( TASK_ID / 3 ))]}
+PH_TRANS=${LAMBDAS[$(( TASK_ID % 3 ))]}
+
+# -----------------------------
+# Knobs: override at submit time with --export=ALL,NAME=value
+# -----------------------------
+PRESET=${PRESET:-he-ihc}            # he-ihc (H / H+DAB) or he-sr (E / DAB)
 STEPS=${STEPS:-100000}
 BATCH_SIZE=${BATCH_SIZE:-4}
 IMAGE_SIZE=${IMAGE_SIZE:-256}
 LAMBDA_TOPO=${LAMBDA_TOPO:-1.0}
-PRESET=${PRESET:-he-ihc}          # he-ihc (H / H+DAB) or he-sr (E / DAB)
 TOPO_DOWNSAMPLE=${TOPO_DOWNSAMPLE:-2}
 TOPO_EVERY=${TOPO_EVERY:-1}
 TOPO_START=${TOPO_START:-10000}     # let the GAN find its footing first
 TOPO_WARMUP=${TOPO_WARMUP:-5000}    # then ramp the PH weight in over 5k steps
 
+echo "TASK_ID=${TASK_ID}"
+echo "PRESET=${PRESET}"
+echo "LAMBDA_PH_CYC=${PH_CYC}  LAMBDA_PH_TRANS=${PH_TRANS}  LAMBDA_TOPO=${LAMBDA_TOPO}"
+
+# -----------------------------
+# Paths
+# -----------------------------
+DATA_DIR=${DATA_DIR:-/work2/bz66izin-VSproject/VS_Data}
+DATA_A=${DATA_A:-${DATA_DIR}/QP_HE/tiles/trainA/}
+DATA_B=${DATA_B:-${DATA_DIR}/QP_SR/tiles/trainB/}
+
+BASE=${BASE:-/work2/bz66izin-VSproject/Outputs_topo}
 RUN_NAME="${PRESET}_cyc${PH_CYC}_trans${PH_TRANS}"
-OUTPUT="${RUNS}/${RUN_NAME}"
+OUTPUT="${BASE}/results/${RUN_NAME}"
 
-# --- environment: replace with whatever your cluster uses ---------------- #
-# module load cuda/12.1
-# source ~/miniconda3/etc/profile.d/conda.sh && conda activate topo-i2i
-source "${VENV:-$PWD/.venv}/bin/activate"
+mkdir -p "${OUTPUT}"
+echo "Output directory: ${OUTPUT}"
 
-# Persistent homology is CPU-bound, single-threaded per image, and runs while
-# the GPU idles. Leave BLAS threads alone so they don't fight the dataloader.
-export OMP_NUM_THREADS=1
-export MKL_NUM_THREADS=1
-NUM_WORKERS=$(( SLURM_CPUS_PER_TASK > 2 ? SLURM_CPUS_PER_TASK - 2 : 1 ))
+# -----------------------------
+# Training
+# Resumes automatically from OUTPUT if checkpoints are already there, and the
+# PH schedule resumes with it (the step counter is a checkpointed buffer).
+# -----------------------------
+run_cmd topo-train \
+    --dataA "${DATA_A}" \
+    --dataB "${DATA_B}" \
+    --output "${OUTPUT}" \
+    --steps "${STEPS}" \
+    --batch-size "${BATCH_SIZE}" \
+    --image-size "${IMAGE_SIZE}" \
+    --num-workers "${NUM_WORKERS}" \
+    --amp \
+    --preset "${PRESET}" \
+    --lambda-topo "${LAMBDA_TOPO}" \
+    --lambda-ph-cyc "${PH_CYC}" \
+    --lambda-ph-trans "${PH_TRANS}" \
+    --topo-downsample "${TOPO_DOWNSAMPLE}" \
+    --topo-every "${TOPO_EVERY}" \
+    --topo-start-step "${TOPO_START}" \
+    --topo-warmup-steps "${TOPO_WARMUP}"
 
-mkdir -p "$OUTPUT"
-echo "[$(date '+%Y-%m-%dT%H:%M:%S')] task ${i}: ${RUN_NAME}  host=$(hostname)  gpu=${CUDA_VISIBLE_DEVICES:-none}"
-nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || true
-
-srun topo-train \
-  --dataA "$DATA_A" \
-  --dataB "$DATA_B" \
-  --output "$OUTPUT" \
-  --steps "$STEPS" \
-  --batch-size "$BATCH_SIZE" \
-  --image-size "$IMAGE_SIZE" \
-  --num-workers "$NUM_WORKERS" \
-  --amp \
-  --lambda-topo "$LAMBDA_TOPO" \
-  --lambda-ph-cyc "$PH_CYC" \
-  --lambda-ph-trans "$PH_TRANS" \
-  --preset "$PRESET" \
-  --topo-downsample "$TOPO_DOWNSAMPLE" \
-  --topo-every "$TOPO_EVERY" \
-  --topo-start-step "$TOPO_START" \
-  --topo-warmup-steps "$TOPO_WARMUP"
-
-echo "[$(date '+%Y-%m-%dT%H:%M:%S')] task ${i}: ${RUN_NAME} finished"
+echo "Done: ${RUN_NAME} finished successfully."
