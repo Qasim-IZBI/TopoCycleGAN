@@ -133,10 +133,10 @@ weighted sum) and `topo_scale` (the schedule multiplier).
 ### Sweep script environment
 
 `slurm/train_sweep.sh` reads these via `--export=ALL,NAME=value`:
-`DATA_A`, `DATA_B`, `RUNS`, `VENV`, `STEPS`, `BATCH_SIZE`, `IMAGE_SIZE`,
-`PRESET`, `LAMBDA_TOPO`, `TOPO_DOWNSAMPLE`, `TOPO_EVERY`, `TOPO_START`,
-`TOPO_WARMUP`. The two PH weights come from the array index, not the
-environment.
+`DATA_DIR`, `DATA_A`, `DATA_B`, `BASE`, `CONDA_ENV`, `STEPS`, `BATCH_SIZE`,
+`IMAGE_SIZE`, `PRESET`, `LAMBDA_TOPO`, `TOPO_DOWNSAMPLE`, `TOPO_EVERY`,
+`TOPO_START`, `TOPO_WARMUP`. The two PH weights come from the array index, not
+the environment.
 
 ## Objective
 
@@ -209,9 +209,19 @@ sbatch --export=ALL,PRESET=he-sr slurm/train_sweep.sh                  # H&E->SR
 sbatch --export=ALL,DATA_A=/data/HE,DATA_B=/data/IHC slurm/train_sweep.sh
 ```
 
-Each task writes to `runs/cyc<w>_dist<w>/` and resumes from its own checkpoint if
-requeued. Partition, account and the environment-activation line are commented
-placeholders — fill them in for your cluster.
+Create the log directory once before the first submit — SLURM will not make it,
+and jobs fail with nowhere to report why:
+
+```bash
+mkdir -p logs_topo
+```
+
+The script targets the `clara` partition, loads `Anaconda3/2025.06-1` and
+activates the `topocg` conda environment (override with
+`--export=ALL,CONDA_ENV=othername`). Each task writes to
+`${BASE}/results/<preset>_cyc<w>_trans<w>/` and resumes from its own checkpoint
+if requeued — the PH schedule resumes with it, since the step counter is a
+checkpointed buffer.
 
 Note the jobs are deliberately CPU-heavy: persistence is single-threaded per
 image and runs while the GPU idles, so expect low GPU utilisation.
