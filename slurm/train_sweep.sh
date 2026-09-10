@@ -70,13 +70,13 @@ PH_TRANS=${LAMBDAS[$(( TASK_ID % 3 ))]}
 # Knobs: override at submit time with --export=ALL,NAME=value
 # -----------------------------
 PRESET=${PRESET:-he-ihc}            # he-ihc (H / H+DAB) or he-sr (E / DAB)
-STEPS=${STEPS:-100000}
+STEPS=${STEPS:-750000}
 BATCH_SIZE=${BATCH_SIZE:-4}
 IMAGE_SIZE=${IMAGE_SIZE:-256}
 LAMBDA_TOPO=${LAMBDA_TOPO:-1.0}
-TOPO_DOWNSAMPLE=${TOPO_DOWNSAMPLE:-2}
+TOPO_DOWNSAMPLE=${TOPO_DOWNSAMPLE:-1}
 TOPO_EVERY=${TOPO_EVERY:-1}
-TOPO_START=${TOPO_START:-10000}     # let the GAN find its footing first
+TOPO_START=${TOPO_START:-100000}    # let the GAN find its footing first
 TOPO_WARMUP=${TOPO_WARMUP:-5000}    # then ramp the PH weight in over 5k steps
 
 echo "TASK_ID=${TASK_ID}"
