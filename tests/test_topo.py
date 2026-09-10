@@ -440,3 +440,92 @@ def test_step_counter_survives_a_checkpoint_round_trip():
     assert int(restored._topo_step) == 3
     _, logs, _ = restored.compute_generator_loss(_batch())
     assert logs["topo_scale"] == 1.0
+
+
+# --- crop script ---------------------------------------------------------- #
+
+def _write_image(path, size=(64, 64), value=180):
+    import numpy as np
+    from PIL import Image
+    Image.fromarray(np.full((size[1], size[0], 3), value, dtype=np.uint8)).save(path)
+
+
+def test_crop_grid_counts_and_names(tmp_path):
+    from topo_i2i.crop import crop_one
+    src = tmp_path / "a.png"
+    _write_image(str(src), (64, 64))
+    out = tmp_path / "out"
+    out.mkdir()
+    written, skipped = crop_one(str(src), str(out), tile_size=32)
+    assert (written, skipped) == (4, 0)
+    assert sorted(p.name for p in out.iterdir()) == [
+        "a_r0c0.png", "a_r0c1.png", "a_r1c0.png", "a_r1c1.png"]
+
+
+def test_crop_resizes_and_reports_scale(tmp_path):
+    from PIL import Image
+    from topo_i2i.crop import crop_one
+    src = tmp_path / "a.png"
+    _write_image(str(src), (64, 64))
+    out = tmp_path / "out"
+    out.mkdir()
+    crop_one(str(src), str(out), tile_size=32, resize_to=16)
+    assert Image.open(next(out.iterdir())).size == (16, 16)
+
+
+def test_crop_drops_the_edge_remainder(tmp_path):
+    """A 70px image at tile 32 yields 2 crops per axis, not 3 padded ones."""
+    from topo_i2i.crop import crop_one
+    src = tmp_path / "a.png"
+    _write_image(str(src), (70, 70))
+    out = tmp_path / "out"
+    out.mkdir()
+    written, _ = crop_one(str(src), str(out), tile_size=32)
+    assert written == 4
+
+
+def test_crop_overlap_increases_the_count(tmp_path):
+    from topo_i2i.crop import crop_one
+    src = tmp_path / "a.png"
+    _write_image(str(src), (64, 64))
+    out = tmp_path / "out"
+    out.mkdir()
+    written, _ = crop_one(str(src), str(out), tile_size=32, overlap=16)
+    assert written == 9  # stride 16 -> positions 0,16,32 on each axis
+
+
+def test_crop_rejects_overlap_at_least_tile_size(tmp_path):
+    from topo_i2i.crop import crop_one
+    src = tmp_path / "a.png"
+    _write_image(str(src), (64, 64))
+    out = tmp_path / "out"
+    out.mkdir()
+    with pytest.raises(ValueError, match="overlap"):
+        crop_one(str(src), str(out), tile_size=32, overlap=32)
+
+
+def test_tissue_threshold_drops_background_only(tmp_path):
+    import numpy as np
+    from PIL import Image
+    from topo_i2i.crop import crop_one, tissue_fraction
+    arr = np.full((64, 64, 3), 250, dtype=np.uint8)   # background
+    arr[:32, :32] = 100                                # one tissue quadrant
+    src = tmp_path / "a.png"
+    Image.fromarray(arr).save(src)
+    out = tmp_path / "out"
+    out.mkdir()
+    written, skipped = crop_one(str(src), str(out), tile_size=32, tissue_threshold=0.5)
+    assert (written, skipped) == (1, 3)
+    assert tissue_fraction(Image.fromarray(arr[:32, :32])) == pytest.approx(1.0)
+
+
+def test_zero_threshold_keeps_everything(tmp_path):
+    import numpy as np
+    from PIL import Image
+    from topo_i2i.crop import crop_one
+    src = tmp_path / "a.png"
+    Image.fromarray(np.full((64, 64, 3), 255, dtype=np.uint8)).save(src)
+    out = tmp_path / "out"
+    out.mkdir()
+    written, skipped = crop_one(str(src), str(out), tile_size=32, tissue_threshold=0.0)
+    assert (written, skipped) == (4, 0)

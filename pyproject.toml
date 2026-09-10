@@ -27,6 +27,7 @@ dev = ["pytest>=7.4"]
 
 [project.scripts]
 topo-train = "topo_i2i.train:main"
+topo-crop = "topo_i2i.crop:main"
 
 [tool.setuptools.packages.find]
 include = ["topo_i2i*"]

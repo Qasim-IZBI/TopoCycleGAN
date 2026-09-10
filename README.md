@@ -10,6 +10,44 @@ applied to unpaired virtual staining, layered on top of
 pip install -e .          # pulls the zoo at a pinned commit, plus gudhi
 ```
 
+## Preparing tiles
+
+For datasets that already ship tiles (`trainA/ trainB/ valA/ valB/`) rather than
+whole slides, where the zoo's WSI `tile.py` does not apply:
+
+```bash
+topo-crop --input data/raw --output data/tiles --tile_size 512 --resize_to 256
+```
+
+It mirrors the directory tree, so the result feeds `topo-train` unchanged. Flag
+names match the zoo's `tile.py`, so the two are interchangeable in a pipeline.
+
+| flag | default | meaning |
+|---|---|---|
+| `--input` / `--output` | *required* | source root and mirrored destination |
+| `--subdirs` | `trainA trainB valA valB` | subfolders to process |
+| `--tile_size` | `512` | crop size taken from the source image |
+| `--resize_to` | *= tile_size* | resample each crop to this size |
+| `--overlap` | `0` | overlap between neighbouring crops, in source pixels |
+| `--tissue_threshold` | `0.0` | drop crops below this tissue fraction (0 keeps everything) |
+| `--white_level` | `220` | grayscale value above which a pixel counts as background |
+| `--ext` | `.png` | output extension |
+| `--num_workers` | all cores | |
+| `--dry_run` | off | report what would be written without writing it |
+
+**On scale.** `--resize_to` changes the microns per pixel of the output: cutting
+512 and resizing to 256 halves the resolution relative to cutting 256 directly,
+and the script prints the factor so it is on the record. The zoo's WSI pipeline
+defaults to `tile_size=256, resize_to=None`, i.e. 256 px at the slide's native
+resolution — to match that from 1024 px source tiles of comparable µm/px, use
+`--tile_size 256` (16 crops per image) rather than 512→256. Resolution decides
+whether adjacent nuclei remain separate connected components, so it changes what
+the persistent-homology terms measure; a `--lambda-topo` tuned at one scale will
+not transfer to another.
+
+Any remainder on the right/bottom edge is dropped rather than padded, so every
+tile covers real tissue at the same scale.
+
 ## Train
 
 ```bash
