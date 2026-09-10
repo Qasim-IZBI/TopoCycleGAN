@@ -114,6 +114,10 @@ echo "Output directory: ${OUTPUT}"
 # Training
 # Resumes automatically from OUTPUT if checkpoints are already there, and the
 # PH schedule resumes with it (the step counter is a checkpointed buffer).
+#
+# No --amp: the stain fields go through -log10, and fp16 there ties values that
+# should be distinct, which changes the critical-cell structure the persistence
+# diagrams are built from. Add --amp back only if the PH terms are off.
 # -----------------------------
 run_cmd topo-train \
     --dataA "${DATA_A}" \
@@ -123,7 +127,6 @@ run_cmd topo-train \
     --batch-size "${BATCH_SIZE}" \
     --image-size "${IMAGE_SIZE}" \
     --num-workers "${NUM_WORKERS}" \
-    --amp \
     --preset "${PRESET}" \
     --lambda-topo "${LAMBDA_TOPO}" \
     --lambda-ph-cyc "${PH_CYC}" \
