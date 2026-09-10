@@ -16,8 +16,13 @@ For datasets that already ship tiles (`trainA/ trainB/ valA/ valB/`) rather than
 whole slides, where the zoo's WSI `tile.py` does not apply:
 
 ```bash
-topo-crop --input data/raw --output data/tiles --tile_size 512 --resize_to 256
+topo-crop --input  /work2/bz66izin-TopoCG/MIST/Ki67/TrainValAB/ \
+          --output /work2/bz66izin-TopoCG/MIST_tiles/Ki67/TrainValAB/ \
+          --tile_size 512 --resize_to 256
 ```
+
+That is the command the sweep script's default paths assume: MIST Ki67 ships
+1024x1024 tiles, cut into four 512x512 quadrants and resampled to 256x256.
 
 It mirrors the directory tree, so the result feeds `topo-train` unchanged. Flag
 names match the zoo's `tile.py`, so the two are interchangeable in a pipeline.

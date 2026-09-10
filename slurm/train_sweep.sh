@@ -86,11 +86,17 @@ echo "LAMBDA_PH_CYC=${PH_CYC}  LAMBDA_PH_TRANS=${PH_TRANS}  LAMBDA_TOPO=${LAMBDA
 # -----------------------------
 # Paths
 # -----------------------------
-DATA_DIR=${DATA_DIR:-/work2/bz66izin-VSproject/VS_Data}
-DATA_A=${DATA_A:-${DATA_DIR}/QP_HE/tiles/trainA/}
-DATA_B=${DATA_B:-${DATA_DIR}/QP_SR/tiles/trainB/}
+# Tiles as produced by topo-crop, which mirrors trainA/trainB/valA/valB:
+#   topo-crop --input  /work2/bz66izin-TopoCG/MIST/Ki67/TrainValAB/ \
+#             --output /work2/bz66izin-TopoCG/MIST_tiles/Ki67/TrainValAB/ \
+#             --tile_size 512 --resize_to 256
+DATA_DIR=${DATA_DIR:-/work2/bz66izin-TopoCG/MIST_tiles/Ki67/TrainValAB}
+DATA_A=${DATA_A:-${DATA_DIR}/trainA/}
+DATA_B=${DATA_B:-${DATA_DIR}/trainB/}
 
-BASE=${BASE:-/work2/bz66izin-VSproject/Outputs_topo}
+# valA/valB sit alongside these; nothing in the training loop reads them yet.
+
+BASE=${BASE:-/work2/bz66izin-TopoCG/Outputs_topo}
 RUN_NAME="${PRESET}_cyc${PH_CYC}_trans${PH_TRANS}"
 OUTPUT="${BASE}/results/${RUN_NAME}"
 
