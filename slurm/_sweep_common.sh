@@ -73,8 +73,9 @@ PH_TRANS=${PH_WEIGHTS[$TRANS_ID]}
 # Knobs: override at submit time with --export=ALL,NAME=value
 # -----------------------------
 PRESET=${PRESET:-he-ihc}            # he-ihc (H / H+DAB) or he-sr (E / DAB)
-STEPS=${STEPS:-750000}
+STEPS=${STEPS:-400000}              # 8 epochs of ~50k tiles; fits one 48h slot
 BATCH_SIZE=${BATCH_SIZE:-1}
+SAVE_STEPS=${SAVE_STEPS:-100000}    # permanent checkpoints at 100k/200k/300k/400k
 IMAGE_SIZE=${IMAGE_SIZE:-256}
 LAMBDA_TOPO=${LAMBDA_TOPO:-${LAMBDA_TOPOS[$TOPO_ID]}}
 TOPO_DOWNSAMPLE=${TOPO_DOWNSAMPLE:-1}
@@ -126,6 +127,7 @@ run_cmd topo-train \
     --batch-size "${BATCH_SIZE}" \
     --image-size "${IMAGE_SIZE}" \
     --num-workers "${NUM_WORKERS}" \
+    --save-steps "${SAVE_STEPS}" \
     --preset "${PRESET}" \
     --lambda-topo "${LAMBDA_TOPO}" \
     --lambda-ph-cyc "${PH_CYC}" \

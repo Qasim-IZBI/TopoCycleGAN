@@ -140,7 +140,7 @@ weighted sum) and `topo_scale` (the schedule multiplier).
 The sweep scripts read these via `--export=ALL,NAME=value`:
 `DATA_DIR`, `DATA_A`, `DATA_B`, `BASE`, `CONDA_ENV`, `STEPS`, `BATCH_SIZE`,
 `IMAGE_SIZE`, `PRESET`, `LAMBDA_TOPO`, `TOPO_DOWNSAMPLE`, `TOPO_EVERY`,
-`TOPO_START`, `TOPO_WARMUP`, `MARKER`, `REPO`. The three sweep weights come from the array index, not
+`SAVE_STEPS`, `TOPO_START`, `TOPO_WARMUP`, `MARKER`, `REPO`. The three sweep weights come from the array index, not
 the environment.
 
 ## Objective
@@ -240,6 +240,12 @@ collide.
 
 Tasks 0, 9 and 18 all have both weights at zero, so they are the same baseline
 three times — run one.
+
+Defaults are 400,000 steps — 8 epochs of ~50k tiles, and ~41 h, so a cell
+finishes inside one 48 h allocation without requeueing — with permanent
+checkpoints every 100k steps (100k/200k/300k/400k). Each checkpoint is ~340 MB
+(model plus both Adam states), so budget ~1.7 GB per run and ~170 GB for a full
+4-marker sweep.
 
 Create the log directory once before the first submit — SLURM will not make it,
 and jobs fail with nowhere to report why:
