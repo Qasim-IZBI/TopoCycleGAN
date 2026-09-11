@@ -203,16 +203,32 @@ cycle and distribution term.
 
 ## Sweeping the PH weights
 
-`slurm/train_sweep.sh` is a SLURM array job over the 3x3 grid
-lambda_ph_cyc x lambda_ph_trans in {0.25, 0.5, 1}:
+`slurm/train_sweep.sh` is a SLURM array job over a 3x3x3 grid:
+
+| axis | values | what it answers |
+|---|---|---|
+| `lambda_topo` | 2e-4, 2e-3, 2e-2 | overall PH scale |
+| `lambda_ph_cyc` | 0, 0.5, 1 | is the cycle-topology family redundant with the L1 cycle loss? |
+| `lambda_ph_trans` | 0, 0.5, 1 | is the translation-topology family pulling its weight? |
+
+The zeros make the grid contain its own ablations: `ph_cyc=0` isolates the
+translation terms, `ph_trans=0` isolates the cycle terms, and both zero is the
+plain CycleGAN baseline.
+
+On the scale axis: 2e-4 puts the PH gradient roughly on a par with the cycle
+gradient, and 2e-2 leaves it ~80x larger. The loss sums over ~17k diagram points
+while the other terms average over pixels, so its raw value (~600) is a reduction
+artifact, not a measure of importance — matching gradients matters, matching
+printed values does not.
 
 ```bash
-sbatch slurm/train_sweep.sh                                            # all 9
-sbatch --array=4 slurm/train_sweep.sh                                  # one cell
-sbatch --array=0 --export=ALL,LAMBDA_TOPO=0 slurm/train_sweep.sh       # baseline
-sbatch --export=ALL,PRESET=he-sr slurm/train_sweep.sh                  # H&E->SR
-sbatch --export=ALL,DATA_A=/data/HE,DATA_B=/data/IHC slurm/train_sweep.sh
+sbatch slurm/train_sweep.sh                                # all 27
+sbatch --array=0-8,10-17,19-26 slurm/train_sweep.sh        # skip duplicate baselines
+sbatch --array=13 slurm/train_sweep.sh                     # one cell
 ```
+
+Tasks 0, 9 and 18 all have both weights at zero, so they are the same baseline
+three times — run one.
 
 Create the log directory once before the first submit — SLURM will not make it,
 and jobs fail with nowhere to report why:

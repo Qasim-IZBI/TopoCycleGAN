@@ -9,14 +9,15 @@
 #SBATCH --partition=clara
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
-#SBATCH --array=0-8   # 9 jobs = 3 lambda_ph_cyc x 3 lambda_ph_trans
+#SBATCH --array=0-26  # 27 jobs = 3 lambda_topo x 3 ph_cyc x 3 ph_trans
 
 # NOTE: SLURM will not create logs_topo/ for you -- `mkdir -p logs_topo` once
 # before the first sbatch, or the jobs fail with no output to tell you why.
 #
 # Submit:   sbatch slurm/train_sweep.sh
-# One cell: sbatch --array=4 slurm/train_sweep.sh
-# Baseline: sbatch --array=0 --export=ALL,LAMBDA_TOPO=0 slurm/train_sweep.sh
+# One cell: sbatch --array=13 slurm/train_sweep.sh
+# Skip dups: sbatch --array=0-8,10-17,19-26 slurm/train_sweep.sh
+# Baseline: sbatch --array=0 slurm/train_sweep.sh  (ph_cyc=0, ph_trans=0)
 # H&E->SR:  sbatch --export=ALL,PRESET=he-sr slurm/train_sweep.sh
 
 set -eo pipefail
@@ -55,21 +56,31 @@ run_cmd() {
 }
 
 # -----------------------------
-# Axes
-# lambda_ph_trans varies fastest, lambda_ph_cyc slowest.
+# Axes: 3 x 3 x 3
+#   lambda_topo  {2e-4, 2e-3, 2e-2}  overall scale  (slowest)
+#   ph_cyc       {0, 0.5, 1}         cycle-topology weight
+#   ph_trans     {0, 0.5, 1}         translation-topology weight (fastest)
 #
-# Job layout:
-#   0: cyc=0.25 trans=0.25    5: cyc=0.5  trans=1
-#   1: cyc=0.25 trans=0.5     6: cyc=1    trans=0.25
-#   2: cyc=0.25 trans=1       7: cyc=1    trans=0.5
-#   3: cyc=0.5  trans=0.25    8: cyc=1    trans=1
-#   4: cyc=0.5  trans=0.5
+# 2e-4 puts the PH gradient on a par with the cycle gradient, 2e-2 leaves it
+# ~80x larger; the old 0.25-1 range sat at 1000-4000x, i.e. entirely saturated.
+# A 0 on either weight switches that family off, so the grid contains the
+# ablations for both redundancy questions.
+#
+# NOTE: cells with ph_cyc=0 AND ph_trans=0 have no topological term at all, so
+# tasks 0, 9 and 18 are the same CycleGAN baseline three times over. Run one and
+# skip the others with e.g.  --array=0-8,10-17,19-26
 # -----------------------------
 TASK_ID=${SLURM_ARRAY_TASK_ID:?submit with sbatch -- there is no array index to sweep over}
 
-LAMBDAS=(0.25 0.5 1)
-PH_CYC=${LAMBDAS[$(( TASK_ID / 3 ))]}
-PH_TRANS=${LAMBDAS[$(( TASK_ID % 3 ))]}
+LAMBDA_TOPOS=(0.0002 0.002 0.02)
+PH_WEIGHTS=(0 0.5 1)
+
+TOPO_ID=$(( TASK_ID / 9 ))
+CYC_ID=$(( (TASK_ID / 3) % 3 ))
+TRANS_ID=$(( TASK_ID % 3 ))
+
+PH_CYC=${PH_WEIGHTS[$CYC_ID]}
+PH_TRANS=${PH_WEIGHTS[$TRANS_ID]}
 
 # -----------------------------
 # Knobs: override at submit time with --export=ALL,NAME=value
@@ -78,7 +89,7 @@ PRESET=${PRESET:-he-ihc}            # he-ihc (H / H+DAB) or he-sr (E / DAB)
 STEPS=${STEPS:-750000}
 BATCH_SIZE=${BATCH_SIZE:-1}
 IMAGE_SIZE=${IMAGE_SIZE:-256}
-LAMBDA_TOPO=${LAMBDA_TOPO:-1.0}
+LAMBDA_TOPO=${LAMBDA_TOPO:-${LAMBDA_TOPOS[$TOPO_ID]}}
 TOPO_DOWNSAMPLE=${TOPO_DOWNSAMPLE:-1}
 TOPO_EVERY=${TOPO_EVERY:-2}
 TOPO_START=${TOPO_START:-100000}    # let the GAN find its footing first
@@ -104,7 +115,7 @@ DATA_B=${DATA_B:-${DATA_DIR}/trainB/}
 # valA/valB sit alongside these; nothing in the training loop reads them yet.
 
 BASE=${BASE:-/work2/bz66izin-TopoCG/Outputs_topo}
-RUN_NAME="${PRESET}_cyc${PH_CYC}_trans${PH_TRANS}"
+RUN_NAME="${PRESET}_lt${LAMBDA_TOPO}_cyc${PH_CYC}_trans${PH_TRANS}"
 OUTPUT="${BASE}/results/${RUN_NAME}"
 
 mkdir -p "${OUTPUT}"
