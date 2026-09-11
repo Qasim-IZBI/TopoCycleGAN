@@ -137,10 +137,10 @@ weighted sum) and `topo_scale` (the schedule multiplier).
 
 ### Sweep script environment
 
-`slurm/train_sweep.sh` reads these via `--export=ALL,NAME=value`:
+The sweep scripts read these via `--export=ALL,NAME=value`:
 `DATA_DIR`, `DATA_A`, `DATA_B`, `BASE`, `CONDA_ENV`, `STEPS`, `BATCH_SIZE`,
 `IMAGE_SIZE`, `PRESET`, `LAMBDA_TOPO`, `TOPO_DOWNSAMPLE`, `TOPO_EVERY`,
-`TOPO_START`, `TOPO_WARMUP`. The two PH weights come from the array index, not
+`TOPO_START`, `TOPO_WARMUP`, `MARKER`, `REPO`. The three sweep weights come from the array index, not
 the environment.
 
 ## Objective
@@ -203,7 +203,8 @@ cycle and distribution term.
 
 ## Sweeping the PH weights
 
-`slurm/train_sweep.sh` is a SLURM array job over a 3x3x3 grid:
+One sweep script per MIST marker — `slurm/sweep_ki67.sh`, `sweep_er.sh`,
+`sweep_her2.sh`, `sweep_pr.sh` — each a SLURM array job over a 3x3x3 grid:
 
 | axis | values | what it answers |
 |---|---|---|
@@ -222,10 +223,20 @@ artifact, not a measure of importance — matching gradients matters, matching
 printed values does not.
 
 ```bash
-sbatch slurm/train_sweep.sh                                # all 27
-sbatch --array=0-8,10-17,19-26 slurm/train_sweep.sh        # skip duplicate baselines
-sbatch --array=13 slurm/train_sweep.sh                     # one cell
+sbatch slurm/sweep_ki67.sh                                 # all 27
+sbatch --array=0-8,10-17,19-26 slurm/sweep_er.sh           # skip duplicate baselines
+sbatch --array=13 slurm/sweep_her2.sh                      # one cell
 ```
+
+The four differ only in their `#SBATCH` header and a `MARKER` assignment; the
+grid, schedule and flags live once in `slurm/_sweep_common.sh`, which each
+wrapper sources. `_sweep_common.sh` is not submittable on its own — it refuses
+without `MARKER`. **Submit from the repository root** so `SLURM_SUBMIT_DIR`
+locates it, or export `REPO=/path/to/TopoCycleGAN`.
+
+`DATA_DIR` defaults to `/work2/bz66izin-TopoCG/MIST_tiles/${MARKER}/TrainValAB`
+and run directories are prefixed with the marker, so the four sweeps never
+collide.
 
 Tasks 0, 9 and 18 all have both weights at zero, so they are the same baseline
 three times — run one.
@@ -237,7 +248,7 @@ and jobs fail with nowhere to report why:
 mkdir -p logs_topo
 ```
 
-The script targets the `clara` partition, loads `Anaconda3/2025.06-1` and
+The scripts target the `clara` partition, loads `Anaconda3/2025.06-1` and
 activates the `topocg` conda environment (override with
 `--export=ALL,CONDA_ENV=othername`). Each task writes to
 `${BASE}/results/<preset>_cyc<w>_trans<w>/` and resumes from its own checkpoint

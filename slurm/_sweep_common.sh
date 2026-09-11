@@ -1,24 +1,11 @@
-#!/bin/bash
-#SBATCH --job-name=topo_sweep
-#SBATCH --output=logs_topo/topo_%A_%a.out
-#SBATCH --error=logs_topo/topo_%A_%a.err
-
-#SBATCH --time=48:00:00
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
-#SBATCH --partition=clara
-#SBATCH --ntasks=1
-#SBATCH --gres=gpu:1
-#SBATCH --array=0-26  # 27 jobs = 3 lambda_topo x 3 ph_cyc x 3 ph_trans
-
-# NOTE: SLURM will not create logs_topo/ for you -- `mkdir -p logs_topo` once
-# before the first sbatch, or the jobs fail with no output to tell you why.
+# Shared body of the per-marker sweeps -- not submitted directly.
 #
-# Submit:   sbatch slurm/train_sweep.sh
-# One cell: sbatch --array=13 slurm/train_sweep.sh
-# Skip dups: sbatch --array=0-8,10-17,19-26 slurm/train_sweep.sh
-# Baseline: sbatch --array=0 slurm/train_sweep.sh  (ph_cyc=0, ph_trans=0)
-# H&E->SR:  sbatch --export=ALL,PRESET=he-sr slurm/train_sweep.sh
+# Sourced by sweep_ki67.sh / sweep_er.sh / sweep_her2.sh / sweep_pr.sh, each of
+# which carries its own #SBATCH header and sets MARKER before sourcing. Keeping
+# the logic here means the 3x3x3 grid, the schedule and the flags are defined
+# once rather than drifting across four near-identical files.
+
+: "${MARKER:?source this from a per-marker wrapper, do not sbatch it directly}"
 
 set -eo pipefail
 
@@ -97,6 +84,7 @@ TOPO_WARMUP=${TOPO_WARMUP:-50000}   # then ramp the PH weight in over 50k steps,
                                     # keeping the ramp at half the start step as
                                     # before (was 5k after 10k)
 
+echo "MARKER=${MARKER}"
 echo "TASK_ID=${TASK_ID}"
 echo "PRESET=${PRESET}"
 echo "LAMBDA_PH_CYC=${PH_CYC}  LAMBDA_PH_TRANS=${PH_TRANS}  LAMBDA_TOPO=${LAMBDA_TOPO}"
@@ -105,17 +93,17 @@ echo "LAMBDA_PH_CYC=${PH_CYC}  LAMBDA_PH_TRANS=${PH_TRANS}  LAMBDA_TOPO=${LAMBDA
 # Paths
 # -----------------------------
 # Tiles as produced by topo-crop, which mirrors trainA/trainB/valA/valB:
-#   topo-crop --input  /work2/bz66izin-TopoCG/MIST/Ki67/TrainValAB/ \
-#             --output /work2/bz66izin-TopoCG/MIST_tiles/Ki67/TrainValAB/ \
+#   topo-crop --input  /work2/bz66izin-TopoCG/MIST/${MARKER}/TrainValAB/ \
+#             --output /work2/bz66izin-TopoCG/MIST_tiles/${MARKER}/TrainValAB/ \
 #             --tile_size 512 --resize_to 256
-DATA_DIR=${DATA_DIR:-/work2/bz66izin-TopoCG/MIST_tiles/Ki67/TrainValAB}
+DATA_DIR=${DATA_DIR:-/work2/bz66izin-TopoCG/MIST_tiles/${MARKER}/TrainValAB}
 DATA_A=${DATA_A:-${DATA_DIR}/trainA/}
 DATA_B=${DATA_B:-${DATA_DIR}/trainB/}
 
 # valA/valB sit alongside these; nothing in the training loop reads them yet.
 
 BASE=${BASE:-/work2/bz66izin-TopoCG/Outputs_topo}
-RUN_NAME="${PRESET}_lt${LAMBDA_TOPO}_cyc${PH_CYC}_trans${PH_TRANS}"
+RUN_NAME="${MARKER}_${PRESET}_lt${LAMBDA_TOPO}_cyc${PH_CYC}_trans${PH_TRANS}"
 OUTPUT="${BASE}/results/${RUN_NAME}"
 
 mkdir -p "${OUTPUT}"
