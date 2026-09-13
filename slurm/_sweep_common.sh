@@ -43,41 +43,82 @@ run_cmd() {
 }
 
 # -----------------------------
-# Axes: 3 x 3 x 3
-#   lambda_topo  {2e-4, 2e-3, 2e-2}  overall scale  (slowest)
-#   ph_cyc       {0, 0.5, 1}         cycle-topology weight
-#   ph_trans     {0, 0.5, 1}         translation-topology weight (fastest)
+# Grid: an explicit cell list, so duplicate combinations are simply absent.
 #
-# 2e-4 puts the PH gradient on a par with the cycle gradient, 2e-2 leaves it
-# ~80x larger; the old 0.25-1 range sat at 1000-4000x, i.e. entirely saturated.
-# A 0 on either weight switches that family off, so the grid contains the
-# ablations for both redundancy questions.
+#   lambda_cycle  {10, 0}          CycleGAN L1 cycle weight
+#   ph_cyc        {0, 1}           cycle-topology weight
+#   ph_trans      {0, 1}           translation-topology weight
+#   lambda_topo   {2e-4, 2e-2}     overall PH scale
+#   field_B       hematoxylin/dab | dab/hematoxylin | dab+hematoxylin (sum)
 #
-# NOTE: cells with ph_cyc=0 AND ph_trans=0 have no topological term at all, so
-# tasks 0, 9 and 18 are the same CycleGAN baseline three times over. Run one and
-# skip the others with e.g.  --array=0-8,10-17,19-26
+# field_A is fixed at hematoxylin/eosin. The '/' forms deconvolve; a bare stain
+# name projects and does NOT separate stains -- see fields.StainField.
+#
+# The full factorial is 48, but ph_cyc=0 AND ph_trans=0 switches off every
+# topological term, making lambda_topo and both fields inert -- those 12 collapse
+# to one anchor run per lambda_cycle. The 38 that remain are listed below.
+#
+#   tasks  0-18  lambda_cycle=10  (the critical path)
+#   tasks 19-37  lambda_cycle=0   (does topology substitute for L1 cycle?)
+#
+# Format: lambda_cycle:ph_cyc:ph_trans:lambda_topo:field_B:field_combine
 # -----------------------------
 TASK_ID=${SLURM_ARRAY_TASK_ID:?submit with sbatch -- there is no array index to sweep over}
 
-LAMBDA_TOPOS=(0.0002 0.002 0.02)
-PH_WEIGHTS=(0 0.5 1)
-
-TOPO_ID=$(( TASK_ID / 9 ))
-CYC_ID=$(( (TASK_ID / 3) % 3 ))
-TRANS_ID=$(( TASK_ID % 3 ))
-
-PH_CYC=${PH_WEIGHTS[$CYC_ID]}
-PH_TRANS=${PH_WEIGHTS[$TRANS_ID]}
+CELLS=(
+  "10:0:0:0:hematoxylin/dab:max"   # anchor: no PH, fields inert
+  "10:0:1:0.0002:hematoxylin/dab:max"
+  "10:0:1:0.0002:dab/hematoxylin:max"
+  "10:0:1:0.0002:dab+hematoxylin:sum"
+  "10:0:1:0.02:hematoxylin/dab:max"
+  "10:0:1:0.02:dab/hematoxylin:max"
+  "10:0:1:0.02:dab+hematoxylin:sum"
+  "10:1:0:0.0002:hematoxylin/dab:max"
+  "10:1:0:0.0002:dab/hematoxylin:max"
+  "10:1:0:0.0002:dab+hematoxylin:sum"
+  "10:1:0:0.02:hematoxylin/dab:max"
+  "10:1:0:0.02:dab/hematoxylin:max"
+  "10:1:0:0.02:dab+hematoxylin:sum"
+  "10:1:1:0.0002:hematoxylin/dab:max"
+  "10:1:1:0.0002:dab/hematoxylin:max"
+  "10:1:1:0.0002:dab+hematoxylin:sum"
+  "10:1:1:0.02:hematoxylin/dab:max"
+  "10:1:1:0.02:dab/hematoxylin:max"
+  "10:1:1:0.02:dab+hematoxylin:sum"
+  "0:0:0:0:hematoxylin/dab:max"    # anchor: no PH, fields inert
+  "0:0:1:0.0002:hematoxylin/dab:max"
+  "0:0:1:0.0002:dab/hematoxylin:max"
+  "0:0:1:0.0002:dab+hematoxylin:sum"
+  "0:0:1:0.02:hematoxylin/dab:max"
+  "0:0:1:0.02:dab/hematoxylin:max"
+  "0:0:1:0.02:dab+hematoxylin:sum"
+  "0:1:0:0.0002:hematoxylin/dab:max"
+  "0:1:0:0.0002:dab/hematoxylin:max"
+  "0:1:0:0.0002:dab+hematoxylin:sum"
+  "0:1:0:0.02:hematoxylin/dab:max"
+  "0:1:0:0.02:dab/hematoxylin:max"
+  "0:1:0:0.02:dab+hematoxylin:sum"
+  "0:1:1:0.0002:hematoxylin/dab:max"
+  "0:1:1:0.0002:dab/hematoxylin:max"
+  "0:1:1:0.0002:dab+hematoxylin:sum"
+  "0:1:1:0.02:hematoxylin/dab:max"
+  "0:1:1:0.02:dab/hematoxylin:max"
+  "0:1:1:0.02:dab+hematoxylin:sum"
+)
+(( TASK_ID < ${#CELLS[@]} )) || { echo "task ${TASK_ID} is past the end of the ${#CELLS[@]}-cell grid" >&2; exit 1; }
+IFS=: read -r LAMBDA_CYCLE PH_CYC PH_TRANS CELL_TOPO CELL_FIELD_B CELL_COMBINE <<< "${CELLS[$TASK_ID]}"
 
 # -----------------------------
 # Knobs: override at submit time with --export=ALL,NAME=value
 # -----------------------------
-PRESET=${PRESET:-he-ihc}            # he-ihc (H / H+DAB) or he-sr (E / DAB)
+FIELD_A=${FIELD_A:-hematoxylin/eosin}
+FIELD_B=${FIELD_B:-$CELL_FIELD_B}
+FIELD_COMBINE=${FIELD_COMBINE:-$CELL_COMBINE}
 STEPS=${STEPS:-400000}              # 8 epochs of ~50k tiles; fits one 48h slot
 BATCH_SIZE=${BATCH_SIZE:-1}
 SAVE_STEPS=${SAVE_STEPS:-100000}    # permanent checkpoints at 100k/200k/300k/400k
 IMAGE_SIZE=${IMAGE_SIZE:-256}
-LAMBDA_TOPO=${LAMBDA_TOPO:-${LAMBDA_TOPOS[$TOPO_ID]}}
+LAMBDA_TOPO=${LAMBDA_TOPO:-$CELL_TOPO}
 TOPO_DOWNSAMPLE=${TOPO_DOWNSAMPLE:-1}
 TOPO_EVERY=${TOPO_EVERY:-2}
 TOPO_START=${TOPO_START:-100000}    # let the GAN find its footing first
@@ -87,7 +128,7 @@ TOPO_WARMUP=${TOPO_WARMUP:-50000}   # then ramp the PH weight in over 50k steps,
 
 echo "MARKER=${MARKER}"
 echo "TASK_ID=${TASK_ID}"
-echo "PRESET=${PRESET}"
+echo "LAMBDA_CYCLE=${LAMBDA_CYCLE}  FIELD_A=${FIELD_A}  FIELD_B=${FIELD_B} (${FIELD_COMBINE})"
 echo "LAMBDA_PH_CYC=${PH_CYC}  LAMBDA_PH_TRANS=${PH_TRANS}  LAMBDA_TOPO=${LAMBDA_TOPO}"
 
 # -----------------------------
@@ -104,7 +145,8 @@ DATA_B=${DATA_B:-${DATA_DIR}/trainB/}
 # valA/valB sit alongside these; nothing in the training loop reads them yet.
 
 BASE=${BASE:-/work2/bz66izin-TopoCG/Outputs_topo}
-RUN_NAME="${MARKER}_${PRESET}_lt${LAMBDA_TOPO}_cyc${PH_CYC}_trans${PH_TRANS}"
+FIELD_B_TAG=${FIELD_B//\//-}          # '/' is not safe in a directory name
+RUN_NAME="${MARKER}_lc${LAMBDA_CYCLE}_lt${LAMBDA_TOPO}_cyc${PH_CYC}_trans${PH_TRANS}_${FIELD_B_TAG}"
 OUTPUT="${BASE}/results/${RUN_NAME}"
 
 mkdir -p "${OUTPUT}"
@@ -128,7 +170,10 @@ run_cmd topo-train \
     --image-size "${IMAGE_SIZE}" \
     --num-workers "${NUM_WORKERS}" \
     --save-steps "${SAVE_STEPS}" \
-    --preset "${PRESET}" \
+    --field-A "${FIELD_A}" \
+    --field-B "${FIELD_B}" \
+    --field-combine "${FIELD_COMBINE}" \
+    --lambda-cycle "${LAMBDA_CYCLE}" \
     --lambda-topo "${LAMBDA_TOPO}" \
     --lambda-ph-cyc "${PH_CYC}" \
     --lambda-ph-trans "${PH_TRANS}" \

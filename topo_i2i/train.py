@@ -39,6 +39,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--save-steps", type=int, default=25_000)
     p.add_argument("--log-steps", type=int, default=1_000)
 
+    p.add_argument("--lambda-cycle", type=float, default=10.0,
+                   help="CycleGAN L1 cycle-consistency weight (0 removes it)")
+    p.add_argument("--lambda-identity", type=float, default=0.5,
+                   help="CycleGAN identity weight; note this is the OTHER content "
+                        "constraint and stays on when --lambda-cycle is 0")
+
     g = p.add_argument_group("topological loss")
     g.add_argument("--lambda-topo", type=float, default=1.0,
                    help="overall scale; 0 disables PH entirely (CycleGAN baseline)")
@@ -97,7 +103,10 @@ def main() -> None:
     print("[fields] preset=%s  A=%s  B=%s  combine=%s"
           % (args.preset, fields["field_A"], fields["field_B"], fields["combine"]))
 
-    cfg = TopoCycleGANConfig(topo=TopoConfig(
+    cfg = TopoCycleGANConfig(
+        lambda_cycle=args.lambda_cycle,
+        lambda_identity=args.lambda_identity,
+        topo=TopoConfig(
         lambda_topo=args.lambda_topo,
         lambda_ph_cyc=args.lambda_ph_cyc,
         lambda_ph_trans=args.lambda_ph_trans,
@@ -112,7 +121,7 @@ def main() -> None:
         max_images=args.topo_max_images,
         downsample=args.topo_downsample,
         invert=not args.no_topo_invert,
-    ))
+        ))
     model = TopoCycleGAN(cfg).to(device)
 
     trainer = BaseTrainer(

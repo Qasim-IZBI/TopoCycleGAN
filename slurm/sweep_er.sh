@@ -9,15 +9,15 @@
 #SBATCH --partition=clara
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
-#SBATCH --array=0-26  # 27 jobs = 3 lambda_topo x 3 ph_cyc x 3 ph_trans
+#SBATCH --array=0-37  # 38 cells; see slurm/_sweep_common.sh for the grid
 
 # MIST ER: H&E -> ER IHC.
 #
 # Run once before the first submit:  mkdir -p logs_topo
 #
-#   sbatch slurm/sweep_er.sh                          # all 27
-#   sbatch --array=0-8,10-17,19-26 slurm/sweep_er.sh  # skip duplicate baselines
-#   sbatch --array=13 slurm/sweep_er.sh               # one cell
+#   sbatch slurm/sweep_er.sh              # all 38
+#   sbatch --array=0-18 slurm/sweep_er.sh # lambda_cycle=10 only (critical path)
+#   sbatch --array=13 slurm/sweep_er.sh   # one cell
 #
 # Submit from the repository root so SLURM_SUBMIT_DIR points at it, or export
 # REPO=/path/to/TopoCycleGAN.

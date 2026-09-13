@@ -218,23 +218,29 @@ cycle and distribution term.
 ## Sweeping the PH weights
 
 One sweep script per MIST marker — `slurm/sweep_ki67.sh`, `sweep_er.sh`,
-`sweep_her2.sh`, `sweep_pr.sh` — each a SLURM array job over a 3x3x3 grid:
+`sweep_her2.sh`, `sweep_pr.sh` — each a SLURM array job over an explicit
+38-cell grid:
 
-| axis | values | what it answers |
-|---|---|---|
-| `lambda_topo` | 2e-4, 2e-3, 2e-2 | overall PH scale |
-| `lambda_ph_cyc` | 0, 0.5, 1 | is the cycle-topology family redundant with the L1 cycle loss? |
-| `lambda_ph_trans` | 0, 0.5, 1 | is the translation-topology family pulling its weight? |
+| axis | values |
+|---|---|
+| `lambda_cycle` | 10, 0 |
+| `lambda_ph_cyc` | 0, 1 |
+| `lambda_ph_trans` | 0, 1 |
+| `lambda_topo` | 2e-4, 2e-2 |
+| `field_B` | `hematoxylin/dab`, `dab/hematoxylin`, `dab+hematoxylin` (sum) |
 
-The zeros make the grid contain its own ablations: `ph_cyc=0` isolates the
-translation terms, `ph_trans=0` isolates the cycle terms, and both zero is the
-plain CycleGAN baseline.
+`field_A` is fixed at `hematoxylin/eosin`. The full factorial is 48, but
+`ph_cyc=0` and `ph_trans=0` together switch off every topological term, making
+`lambda_topo` and both fields inert — those 12 collapse to one anchor run per
+`lambda_cycle`, leaving 38. The cell list is written out in
+`slurm/_sweep_common.sh` rather than computed, so the duplicates are simply
+absent and a task index past the end is refused.
 
-On the scale axis: 2e-4 puts the PH gradient roughly on a par with the cycle
-gradient, and 2e-2 leaves it ~80x larger. The loss sums over ~17k diagram points
-while the other terms average over pixels, so its raw value (~600) is a reduction
-artifact, not a measure of importance — matching gradients matters, matching
-printed values does not.
+Tasks 0–18 are `lambda_cycle=10` (the critical path); 19–37 are `lambda_cycle=0`,
+testing whether topological terms can substitute for L1 cycle-consistency. Expect
+that arm to struggle: the diagram distance compares multisets of scalar values
+with no spatial anchoring, so it constrains how many features of what persistence
+exist, never where — only `lambda_identity` would hold content in place.
 
 ```bash
 sbatch slurm/sweep_ki67.sh                                 # all 27
