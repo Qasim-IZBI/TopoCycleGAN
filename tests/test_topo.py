@@ -289,20 +289,22 @@ def test_trans_gradient_reaches_the_generator():
 
 def test_presets_cover_both_translation_tasks():
     from topo_i2i.fields import FIELD_PRESETS
-    assert FIELD_PRESETS["he-ihc"] == {"field_A": "hematoxylin",
-                                        "field_B": "dab+hematoxylin",
-                                        "combine": "max"}
-    assert FIELD_PRESETS["he-sr"] == {"field_A": "eosin",
-                                      "field_B": "dab",
+    assert FIELD_PRESETS["he-ihc"] == {"field_A": "hematoxylin/eosin",
+                                       "field_B": "dab+hematoxylin",
+                                       "combine": "max"}
+    assert FIELD_PRESETS["he-sr"] == {"field_A": "eosin/hematoxylin",
+                                      "field_B": "dab/hematoxylin",
                                       "combine": "max"}
 
 
 def test_explicit_fields_override_the_preset():
     from topo_i2i.fields import resolve_fields
-    assert resolve_fields("he-sr") == {"field_A": "eosin", "field_B": "dab",
+    assert resolve_fields("he-sr") == {"field_A": "eosin/hematoxylin",
+                                       "field_B": "dab/hematoxylin",
                                        "combine": "max"}
-    r = resolve_fields("he-sr", field_B="sirius_red", combine="sum")
-    assert r == {"field_A": "eosin", "field_B": "sirius_red", "combine": "sum"}
+    r = resolve_fields("he-sr", field_B="sirius_red/hematoxylin", combine="sum")
+    assert r == {"field_A": "eosin/hematoxylin",
+                 "field_B": "sirius_red/hematoxylin", "combine": "sum"}
     # a partial override leaves the rest of the preset intact
     assert resolve_fields("he-ihc", field_A="gray")["field_B"] == "dab+hematoxylin"
 
@@ -529,3 +531,67 @@ def test_zero_threshold_keeps_everything(tmp_path):
     out.mkdir()
     written, skipped = crop_one(str(src), str(out), tile_size=32, tissue_threshold=0.0)
     assert (written, skipped) == (4, 0)
+
+
+# --- single-channel deconvolution ('a/b' specs) --------------------------- #
+
+def _stain_pixel(name, amt=1.0):
+    import numpy as np
+    from topo_i2i.fields import STAIN_VECTORS
+    v = np.array(STAIN_VECTORS[name]); v /= np.linalg.norm(v)
+    return torch.tensor(np.power(10.0, -(v*amt)), dtype=torch.float32).view(1,3,1,1)*2-1
+
+
+def test_slash_spec_isolates_the_first_stain():
+    """'a/b' must return a's concentration with b solved for and removed."""
+    from topo_i2i.fields import make_field
+    f = make_field("hematoxylin/eosin")
+    assert f(_stain_pixel("hematoxylin")).item() == pytest.approx(1.0, abs=1e-3)
+    assert f(_stain_pixel("eosin")).item() == pytest.approx(0.0, abs=1e-3)
+
+    g = make_field("dab/hematoxylin")
+    assert g(_stain_pixel("dab")).item() == pytest.approx(1.0, abs=1e-3)
+    assert g(_stain_pixel("hematoxylin")).item() == pytest.approx(0.0, abs=1e-3)
+
+
+def test_slash_spec_recovers_known_mixtures():
+    import numpy as np
+    from topo_i2i.fields import make_field, STAIN_VECTORS
+    H = np.array(STAIN_VECTORS["hematoxylin"]); H /= np.linalg.norm(H)
+    E = np.array(STAIN_VECTORS["eosin"]);       E /= np.linalg.norm(E)
+    f = make_field("hematoxylin/eosin")
+    for aH, aE in ((0.8, 0.2), (0.2, 0.8), (0.5, 0.5)):
+        rgb = np.power(10.0, -(aH*H + aE*E))
+        px = torch.tensor(rgb, dtype=torch.float32).view(1,3,1,1)*2-1
+        assert f(px).item() == pytest.approx(aH, abs=1e-3)
+
+
+def test_projection_does_not_separate_stains():
+    """Documents why the bare name is wrong: it answers ~0.8 for the wrong stain."""
+    from topo_i2i.fields import make_field
+    f = make_field("hematoxylin")
+    assert f(_stain_pixel("dab")).item() > 0.7
+    assert f(_stain_pixel("eosin")).item() > 0.7
+
+
+def test_slash_spec_is_differentiable():
+    from topo_i2i.fields import make_field
+    rgb = (torch.rand(1, 3, 8, 8)*2-1).requires_grad_(True)
+    make_field("hematoxylin/eosin")(rgb).sum().backward()
+    assert rgb.grad is not None and rgb.grad.abs().sum() > 0
+
+
+def test_presets_use_deconvolved_channels():
+    from topo_i2i.fields import FIELD_PRESETS, DeconvolutionField, make_field
+    assert FIELD_PRESETS["he-ihc"]["field_A"] == "hematoxylin/eosin"
+    assert FIELD_PRESETS["he-sr"]["field_A"] == "eosin/hematoxylin"
+    for preset in FIELD_PRESETS.values():
+        for key in ("field_A", "field_B"):
+            f = make_field(preset[key], preset["combine"])
+            assert isinstance(f, DeconvolutionField), (preset, key)
+
+
+def test_channel_argument_is_validated():
+    from topo_i2i.fields import DeconvolutionField
+    with pytest.raises(ValueError, match="channel must be"):
+        DeconvolutionField(("hematoxylin", "dab"), channel=2)

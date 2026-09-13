@@ -42,6 +42,13 @@ def _unit(v):
 class StainField(nn.Module):
     """Project an RGB image onto one stain vector in optical-density space.
 
+    WARNING -- this does NOT isolate the stain. Stain vectors sit within ~37
+    degrees of each other, so a projection onto hematoxylin returns 0.80 of a
+    pure-DAB signal and 0.86 of a pure-eosin one: the result is closer to total
+    stain density than to one stain. Use the 'a/b' spec (DeconvolutionField with
+    a channel selected), which solves for the amounts instead of projecting.
+    Kept only for the crude single-vector case.
+
     Input is assumed to be in [-1, 1] (the zoo's normalisation). The map is
         OD   = -log10(clamp(rgb01, eps, 1))
         conc = <OD, v> / <v, v>
@@ -87,7 +94,10 @@ class DeconvolutionField(nn.Module):
     """
 
     def __init__(self, stains=("hematoxylin", "dab"), combine: str = "max",
-                 eps: float = 1e-3, in_range=(-1.0, 1.0)):
+                 eps: float = 1e-3, in_range=(-1.0, 1.0), channel=None):
+        """`channel=None` merges both stains with `combine`; `channel=0` or `1`
+        returns that stain's concentration alone, with the other one solved for
+        and removed."""
         super().__init__()
         if len(stains) != 2:
             raise ValueError("expected exactly two stains, got %r" % (stains,))
@@ -100,7 +110,10 @@ class DeconvolutionField(nn.Module):
         self.register_buffer("inv", torch.from_numpy(inverse[:2]))  # (2, 3)
         if combine not in ("max", "sum", "mean"):
             raise ValueError("combine must be 'max', 'sum' or 'mean'")
+        if channel not in (None, 0, 1):
+            raise ValueError("channel must be None, 0 or 1, got %r" % (channel,))
         self.combine = combine
+        self.channel = channel
         self.eps = eps
         self.in_range = in_range
 
@@ -109,6 +122,8 @@ class DeconvolutionField(nn.Module):
         rgb01 = ((rgb - lo) / (hi - lo)).clamp(self.eps, 1.0)
         od = -torch.log10(rgb01)                                # (B, 3, H, W)
         conc = torch.einsum("cj,bjhw->bchw", self.inv, od)      # (B, 2, H, W)
+        if self.channel is not None:
+            return conc[:, self.channel]
         if self.combine == "max":
             return conc.max(dim=1).values
         if self.combine == "sum":
@@ -119,15 +134,21 @@ class DeconvolutionField(nn.Module):
 def make_field(spec: str, combine: str = "max", in_range=(-1.0, 1.0)) -> nn.Module:
     """Build the scalar-field module named by `spec`.
 
-        'gray'              luminance, no stain assumption
-        'dab'               projection onto one stain vector (approximate:
-                            the stains stay correlated)
-        'dab+hematoxylin'   full deconvolution of the pair, channels combined
-                            with `combine` -- the accurate way to use more than
-                            one stain
+        'gray'                luminance, no stain assumption
+        'hematoxylin/eosin'   deconvolve the pair, return the FIRST stain's
+                              concentration with the second solved for and
+                              removed -- the correct way to get one channel
+        'dab+hematoxylin'     deconvolve the pair and merge both channels with
+                              `combine`
+        'dab'                 bare projection onto one vector. Does NOT separate
+                              stains (see StainField); kept for completeness,
+                              not recommended.
     """
     if spec == "gray":
         return _GrayField(in_range)
+    if "/" in spec:
+        want, other = spec.split("/", 1)
+        return DeconvolutionField((want, other), in_range=in_range, channel=0)
     if "+" in spec:
         return DeconvolutionField(tuple(spec.split("+")), combine=combine, in_range=in_range)
     return StainField(spec, in_range=in_range)
@@ -153,8 +174,8 @@ class _GrayField(nn.Module):
 #            up the same collagen-rich stroma, so the pair is E <-> the target's
 #            chromogen channel.
 FIELD_PRESETS = {
-    "he-ihc": {"field_A": "hematoxylin", "field_B": "dab+hematoxylin", "combine": "max"},
-    "he-sr":   {"field_A": "eosin",       "field_B": "dab",             "combine": "max"},
+    "he-ihc": {"field_A": "hematoxylin/eosin", "field_B": "dab+hematoxylin", "combine": "max"},
+    "he-sr":  {"field_A": "eosin/hematoxylin", "field_B": "dab/hematoxylin", "combine": "max"},
 }
 
 

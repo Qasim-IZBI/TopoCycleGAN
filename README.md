@@ -157,16 +157,30 @@ Domain A is H&E, domain B is IHC.
 | `--field-*` spec | meaning |
 |---|---|
 | `gray` | luminance, no stain assumption |
-| `hematoxylin` | projection onto one stain vector (approximate — stains stay correlated) |
-| `dab+hematoxylin` | full 3×3 deconvolution of the pair, channels merged by `--field-combine` |
+| `hematoxylin/eosin` | deconvolve the pair, return the **first** stain's concentration with the second solved for and removed |
+| `dab+hematoxylin` | deconvolve the pair and merge both channels with `--field-combine` |
+| `hematoxylin` | bare projection onto one vector — **does not separate stains**, see below |
+
+**Use `a/b`, not a bare stain name.** Stain vectors sit within ~37° of each
+other, so projecting onto one returns most of the others:
+
+```
+field spec                 pure H pure DAB   pure E
+hematoxylin                 1.000    0.800    0.864     <- projection: near-blind
+hematoxylin/eosin           1.000   -0.077   -0.000     <- deconvolution
+hematoxylin/dab             1.000   -0.000    0.297
+```
+
+A bare name measures something closer to total stain density than to one stain.
+The bare form is kept only for completeness; every preset uses `a/b` or `a+b`.
 
 `--preset` picks the pair of channels for a translation task; `--field-A`,
 `--field-B` and `--field-combine` override any part of it.
 
 | preset | domain A | domain B | rationale |
 |---|---|---|---|
-| `he-ihc` | `hematoxylin` | `dab+hematoxylin` (max) | DAB IHC (e.g. Ki67) carries a hematoxylin counterstain, so B merges both to get *all* nuclei, not only the positive ones |
-| `he-sr` | `eosin` | `dab` | Sirius Red marks collagen, and eosin is the H&E channel that picks up the same collagen-rich stroma |
+| `he-ihc` | `hematoxylin/eosin` | `dab+hematoxylin` (max) | DAB IHC (e.g. Ki67) carries a hematoxylin counterstain, so B merges both to get *all* nuclei, not only the positive ones |
+| `he-sr` | `eosin/hematoxylin` | `dab/hematoxylin` | Sirius Red marks collagen, and eosin is the H&E channel that picks up the same collagen-rich stroma |
 
 DAB alone sees only the *positive* nuclei, so the topology it measures changes
 with proliferation index rather than with tissue structure; merging in the
