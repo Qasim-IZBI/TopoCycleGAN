@@ -144,7 +144,9 @@ DATA_B=${DATA_B:-${DATA_DIR}/trainB/}
 
 # valA/valB sit alongside these; nothing in the training loop reads them yet.
 
-BASE=${BASE:-/work2/bz66izin-TopoCG/Outputs_topo}
+# tr rather than ${MARKER,,} so this stays portable to bash 3.x
+MARKER_LC=$(echo "$MARKER" | tr 'A-Z' 'a-z')
+BASE=${BASE:-/work2/bz66izin-TopoCG/Outputs_${MARKER_LC}}
 FIELD_B_TAG=${FIELD_B//\//-}          # '/' is not safe in a directory name
 RUN_NAME="${MARKER}_lc${LAMBDA_CYCLE}_lt${LAMBDA_TOPO}_cyc${PH_CYC}_trans${PH_TRANS}_${FIELD_B_TAG}"
 OUTPUT="${BASE}/results/${RUN_NAME}"

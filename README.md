@@ -255,8 +255,18 @@ without `MARKER`. **Submit from the repository root** so `SLURM_SUBMIT_DIR`
 locates it, or export `REPO=/path/to/TopoCycleGAN`.
 
 `DATA_DIR` defaults to `/work2/bz66izin-TopoCG/MIST_tiles/${MARKER}/TrainValAB`
-and run directories are prefixed with the marker, so the four sweeps never
-collide.
+and `BASE` to `/work2/bz66izin-TopoCG/Outputs_<marker>` (lowercased), so each
+marker writes to its own output tree:
+
+```
+Outputs_ki67/results/Ki67_lc10_lt0.0002_cyc1_trans1_hematoxylin-dab
+Outputs_er/results/ER_lc10_lt0.0002_cyc1_trans1_hematoxylin-dab
+Outputs_her2/results/HER2_...
+Outputs_pr/results/PR_...
+```
+
+Run directories keep the marker prefix too, so a directory stays
+self-describing if it is copied out of its tree.
 
 Tasks 0, 9 and 18 all have both weights at zero, so they are the same baseline
 three times — run one.
