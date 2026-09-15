@@ -64,6 +64,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="override the preset's domain-B field")
     g.add_argument("--field-combine", default=None, choices=("max", "sum", "mean"),
                    help="how an 'a+b' field merges its two channels")
+    g.add_argument("--ph-cyc-split", action="store_true",
+                   help="compare the IHC cycle term per stain channel (H and DAB "
+                        "separately) instead of on the merged field; costs two "
+                        "extra diagrams per step. Does not affect the trans terms")
     g.add_argument("--topo-dims", type=int, nargs="+", default=[0, 1],
                    help="homology dimensions: 0 components, 1 loops")
     g.add_argument("--topo-projection", default="auto",
@@ -113,6 +117,7 @@ def main() -> None:
         field_A=fields["field_A"],
         field_B=fields["field_B"],
         combine=fields["combine"],
+        ph_cyc_split=args.ph_cyc_split,
         dims=tuple(args.topo_dims),
         projection=args.topo_projection,
         start_step=args.topo_start_step,

@@ -46,7 +46,7 @@ import torch
 
 from i2i_stain_zoo.models import CycleGAN, CycleGANConfig
 
-from topo_i2i.fields import make_field
+from topo_i2i.fields import make_field, split_specs
 from topo_i2i.losses import DEFAULT_PROJECTION, paired_diagram_loss
 from topo_i2i.persistence import batch_diagrams
 
@@ -79,6 +79,15 @@ class TopoConfig:
     # losses.DEFAULT_PROJECTION -- lifetime for H0, birth for H1 -- while
     # 'birth', 'lifetime' or 'death' force one for every dimension.
     projection: str = "auto"
+
+    # Compare the IHC cycle term per stain channel instead of on the merged
+    # field. real_B and rec_B are both IHC, so there is no channel-count mismatch
+    # to bridge and merging only hides information: a reconstruction that keeps
+    # the number of positive nuclei but changes *which* ones are positive is
+    # nearly invisible to the merged field. Costs two extra diagrams per step.
+    # (trans is unaffected -- it does need the merge, to bridge H&E's single
+    # nuclear channel against the IHC pair.)
+    ph_cyc_split: bool = False
 
     # Delay the PH terms until the generator produces something worth measuring.
     # Early outputs are noise, and noise maximises the number of critical points,
@@ -119,6 +128,10 @@ class TopoLossMixin:
             "A": make_field(cfg.field_A, cfg.combine),
             "B": make_field(cfg.field_B, cfg.combine),
         }
+        if cfg.ph_cyc_split:
+            first, second = split_specs(cfg.field_B)
+            self._field_mods["B1"] = make_field(first)
+            self._field_mods["B2"] = make_field(second)
 
     def _to_field(self, rgb: torch.Tensor, domain: str) -> torch.Tensor:
         """RGB -> the stain channel this domain's topology is computed on."""
@@ -178,9 +191,18 @@ class TopoLossMixin:
 
         if cfg.lambda_ph_cyc != 0:
             dgm_rec_A = self._diagrams(visuals["rec_A"], "A", detach=False)
-            dgm_rec_B = self._diagrams(visuals["rec_B"], "B", detach=False)
+            dgm_rec_B = (None if cfg.ph_cyc_split
+                         else self._diagrams(visuals["rec_B"], "B", detach=False))
             cyc_H = paired_diagram_loss(dgm_rec_A, dgm_real_A, dims, projection=proj)
-            cyc_I = paired_diagram_loss(dgm_rec_B, dgm_real_B, dims, projection=proj)
+            if cfg.ph_cyc_split:
+                cyc_I = zero
+                for dom in ("B1", "B2"):
+                    cyc_I = cyc_I + paired_diagram_loss(
+                        self._diagrams(visuals["rec_B"], dom, detach=False),
+                        self._diagrams(batch["B"], dom, detach=True),
+                        dims, projection=proj)
+            else:
+                cyc_I = paired_diagram_loss(dgm_rec_B, dgm_real_B, dims, projection=proj)
             total = total + cfg.lambda_ph_cyc * (cyc_H + cyc_I)
             logs["loss_ph_cyc_H"] = float(cyc_H.detach().cpu())
             logs["loss_ph_cyc_I"] = float(cyc_I.detach().cpu())

@@ -189,3 +189,23 @@ def resolve_fields(preset: str, field_A=None, field_B=None, combine=None) -> dic
         if value is not None:
             resolved[key] = value
     return resolved
+
+
+def split_specs(spec: str):
+    """Split a two-stain spec into its two single-channel specs.
+
+        'dab+hematoxylin' -> ('dab/hematoxylin', 'hematoxylin/dab')
+        'hematoxylin/dab' -> ('hematoxylin/dab', 'dab/hematoxylin')
+
+    Used by the per-channel cycle-topology term: comparing an IHC image with its
+    own reconstruction needs no merging, since both sides have the same two
+    stains, and merging hides which channel each nucleus lives in.
+    """
+    if "+" in spec:
+        a, b = spec.split("+", 1)
+    elif "/" in spec:
+        a, b = spec.split("/", 1)
+    else:
+        raise ValueError("cannot split %r: need a two-stain spec like 'a+b' or 'a/b'"
+                         % (spec,))
+    return "%s/%s" % (a, b), "%s/%s" % (b, a)

@@ -114,6 +114,7 @@ The resolved fields are printed at startup as a `[fields]` line.
 | flag | default | meaning |
 |---|---|---|
 | `--topo-dims` | `0 1` | homology dimensions: 0 connected components, 1 loops. Summed into one number |
+| `--ph-cyc-split` | off | compare the IHC cycle term per stain channel (H and DAB separately) instead of on the merged field |
 | `--topo-projection` | `auto` | `auto` = lifetime for H0, birth for H1; or force `birth` / `lifetime` / `death` everywhere |
 
 ### Schedule and cost
@@ -140,7 +141,7 @@ weighted sum) and `topo_scale` (the schedule multiplier).
 The sweep scripts read these via `--export=ALL,NAME=value`:
 `DATA_DIR`, `DATA_A`, `DATA_B`, `BASE`, `CONDA_ENV`, `STEPS`, `BATCH_SIZE`,
 `IMAGE_SIZE`, `PRESET`, `LAMBDA_TOPO`, `TOPO_DOWNSAMPLE`, `TOPO_EVERY`,
-`SAVE_STEPS`, `TOPO_START`, `TOPO_WARMUP`, `MARKER`, `REPO`. The three sweep weights come from the array index, not
+`SAVE_STEPS`, `PH_CYC_SPLIT`, `TOPO_START`, `TOPO_WARMUP`, `MARKER`, `REPO`. The three sweep weights come from the array index, not
 the environment.
 
 ## Objective

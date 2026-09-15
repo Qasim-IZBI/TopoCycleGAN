@@ -649,3 +649,66 @@ def test_inference_forward_produces_a_valid_tile(tmp_path):
     save_tile(y, str(out))
     from PIL import Image
     assert Image.open(out).size == (32, 32)
+
+
+# --- per-channel cycle topology ------------------------------------------ #
+
+def test_split_specs():
+    from topo_i2i.fields import split_specs
+    assert split_specs("dab+hematoxylin") == ("dab/hematoxylin", "hematoxylin/dab")
+    assert split_specs("hematoxylin/dab") == ("hematoxylin/dab", "dab/hematoxylin")
+    with pytest.raises(ValueError, match="cannot split"):
+        split_specs("hematoxylin")
+
+
+def test_split_changes_only_the_ihc_cycle_term():
+    batch = _batch(n=1)
+    plain = _model(downsample=2, field_B="dab+hematoxylin", combine="sum")
+    split = _model(downsample=2, field_B="dab+hematoxylin", combine="sum",
+                   ph_cyc_split=True)
+    _, lp, _ = plain.compute_generator_loss(batch)
+    _, ls, _ = split.compute_generator_loss(batch)
+    assert ls["loss_ph_cyc_I"] != pytest.approx(lp["loss_ph_cyc_I"])
+    for k in ("loss_ph_cyc_H", "loss_ph_trans_H", "loss_ph_trans_I"):
+        assert ls[k] == pytest.approx(lp[k], rel=1e-5), k
+
+
+def test_split_sees_swapped_positivity_that_the_merge_misses():
+    """The error mode the split exists for: same positive count, different nuclei."""
+    import numpy as np
+    from topo_i2i.fields import STAIN_VECTORS, make_field
+    from topo_i2i.persistence import persistence_diagram
+    from topo_i2i.losses import diagram_distance
+
+    H = np.array(STAIN_VECTORS["hematoxylin"]); H /= np.linalg.norm(H)
+    D = np.array(STAIN_VECTORS["dab"]);         D /= np.linalg.norm(D)
+    n, N = 96, 16
+    yy, xx = np.mgrid[0:n, 0:n]
+    r = np.random.default_rng(0)
+    centres = r.integers(8, n-8, (N, 2))
+
+    def render(pos):
+        od = np.zeros((n, n, 3))
+        for (cy, cx), p in zip(centres, pos):
+            od += np.exp(-(((xx-cx)**2 + (yy-cy)**2)/(2*3.0**2)))[..., None] * (D if p else H)
+        return torch.tensor(np.clip(10**(-od), 0, 1),
+                            dtype=torch.float32).permute(2, 0, 1)[None]*2-1
+
+    truth = np.array([i % 2 == 0 for i in range(N)])
+    real, swapped = render(truth), render(~truth)
+
+    def dist(spec, a, b):
+        f = make_field(spec, "sum")
+        return float(diagram_distance(persistence_diagram(-f(a)[0].double(), (0, 1)),
+                                      persistence_diagram(-f(b)[0].double(), (0, 1)), (0, 1)))
+
+    merged = dist("dab+hematoxylin", real, swapped)
+    split = (dist("hematoxylin/dab", real, swapped) + dist("dab/hematoxylin", real, swapped))
+    assert split > 5 * merged, (merged, split)
+
+
+def test_split_is_off_by_default():
+    from topo_i2i.models import TopoConfig
+    assert TopoConfig().ph_cyc_split is False
+    from topo_i2i.train import build_parser
+    assert build_parser().parse_args("--dataA a --dataB b".split()).ph_cyc_split is False

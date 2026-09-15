@@ -58,6 +58,9 @@ SAVE_STEPS=${SAVE_STEPS:-100000}    # permanent checkpoints at 100k/200k/300k/40
 IMAGE_SIZE=${IMAGE_SIZE:-256}
 TOPO_DOWNSAMPLE=${TOPO_DOWNSAMPLE:-1}
 TOPO_EVERY=${TOPO_EVERY:-2}
+PH_CYC_SPLIT=${PH_CYC_SPLIT:-0}     # 1 = compare the IHC cycle term per stain
+                                    # channel; ~+50% persistence cost, so a cell
+                                    # runs ~53h and needs one requeue
 TOPO_START=${TOPO_START:-100000}    # let the GAN find its footing first
 TOPO_WARMUP=${TOPO_WARMUP:-50000}   # then ramp the PH weight in over 50k steps,
                                     # keeping the ramp at half the start step as
@@ -65,7 +68,7 @@ TOPO_WARMUP=${TOPO_WARMUP:-50000}   # then ramp the PH weight in over 50k steps,
 
 echo "MARKER=${MARKER}"
 echo "TASK_ID=${TASK_ID}"
-echo "LAMBDA_CYCLE=${LAMBDA_CYCLE}  FIELD_A=${FIELD_A}  FIELD_B=${FIELD_B} (${FIELD_COMBINE})"
+echo "LAMBDA_CYCLE=${LAMBDA_CYCLE}  FIELD_A=${FIELD_A}  FIELD_B=${FIELD_B} (${FIELD_COMBINE})  PH_CYC_SPLIT=${PH_CYC_SPLIT}"
 echo "LAMBDA_PH_CYC=${PH_CYC}  LAMBDA_PH_TRANS=${PH_TRANS}  LAMBDA_TOPO=${LAMBDA_TOPO}"
 
 # -----------------------------
@@ -117,6 +120,7 @@ run_cmd topo-train \
     --topo-downsample "${TOPO_DOWNSAMPLE}" \
     --topo-every "${TOPO_EVERY}" \
     --topo-start-step "${TOPO_START}" \
-    --topo-warmup-steps "${TOPO_WARMUP}"
+    --topo-warmup-steps "${TOPO_WARMUP}" \
+    ${PH_CYC_SPLIT:+$( [ "$PH_CYC_SPLIT" = "1" ] && echo --ph-cyc-split )}
 
 echo "Done: ${RUN_NAME} finished successfully."
