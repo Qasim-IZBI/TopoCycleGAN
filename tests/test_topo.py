@@ -595,3 +595,57 @@ def test_channel_argument_is_validated():
     from topo_i2i.fields import DeconvolutionField
     with pytest.raises(ValueError, match="channel must be"):
         DeconvolutionField(("hematoxylin", "dab"), channel=2)
+
+
+# --- inference ------------------------------------------------------------ #
+
+def test_zoo_inference_cannot_load_our_checkpoints():
+    """Documents why topo_i2i.inference exists rather than reusing i2i-inference."""
+    from dataclasses import asdict
+    from i2i_stain_zoo.models import CycleGAN, CycleGANConfig
+    from topo_i2i.models import TopoCycleGAN, TopoCycleGANConfig
+    m = TopoCycleGAN(TopoCycleGANConfig(n_blocks=1, ngf=8, ndf=8))
+    with pytest.raises(TypeError, match="topo"):
+        CycleGANConfig(**asdict(m.cfg))
+    plain = CycleGAN(CycleGANConfig(n_blocks=1, ngf=8, ndf=8))
+    with pytest.raises(RuntimeError):
+        plain.load_state_dict(m.state_dict(), strict=True)
+
+
+def test_inference_round_trips_the_topo_config(tmp_path):
+    from dataclasses import asdict
+    from topo_i2i.inference import load_model
+    from topo_i2i.models import TopoCycleGAN, TopoCycleGANConfig, TopoConfig
+
+    cfg = TopoCycleGANConfig(n_blocks=1, ngf=8, ndf=8, lambda_cycle=3.0,
+                             topo=TopoConfig(lambda_topo=0.002, field_B="hematoxylin/dab",
+                                             start_step=123))
+    m = TopoCycleGAN(cfg)
+    path = tmp_path / "ckpt.pt"
+    torch.save({"global_step": 7, "model": m.state_dict(), "config": asdict(cfg)}, path)
+
+    restored = load_model(str(path), torch.device("cpu"))
+    assert restored.cfg.lambda_cycle == 3.0
+    assert restored.topo_cfg.lambda_topo == 0.002
+    assert restored.topo_cfg.field_B == "hematoxylin/dab"
+    assert restored.topo_cfg.start_step == 123
+    assert not restored.training
+
+
+def test_inference_forward_produces_a_valid_tile(tmp_path):
+    from dataclasses import asdict
+    from topo_i2i.inference import load_model, save_tile
+    from topo_i2i.models import TopoCycleGAN, TopoCycleGANConfig
+    cfg = TopoCycleGANConfig(n_blocks=1, ngf=8, ndf=8)
+    m = TopoCycleGAN(cfg)
+    path = tmp_path / "c.pt"
+    torch.save({"model": m.state_dict(), "config": asdict(cfg)}, path)
+
+    model = load_model(str(path), torch.device("cpu"))
+    with torch.no_grad():
+        y = model.forward_A2B(torch.rand(1, 3, 32, 32)*2-1)
+    assert y.shape == (1, 3, 32, 32)
+    out = tmp_path / "t.tif"
+    save_tile(y, str(out))
+    from PIL import Image
+    assert Image.open(out).size == (32, 32)

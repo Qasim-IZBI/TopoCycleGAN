@@ -215,6 +215,27 @@ domain — this is not TopoGAN's distribution matching. TopoGAN's set-level OT l
 Each real domain's diagrams are computed once and shared between that domain's
 cycle and distribution term.
 
+## Validation inference
+
+```bash
+sbatch --export=ALL,MARKER=ER slurm/infer_sweep.sh     # every cell of the ER sweep
+MARKER=ER LIMIT=8 bash slurm/infer_sweep.sh            # quick look, 8 tiles per cell
+topo-infer --ckpt <ckpt> --data <tiles> --outdir <out> # one checkpoint
+```
+
+`infer_sweep.sh` discovers runs by globbing `BASE/results` rather than
+recomputing cell names, so it stays correct if the grid changes and covers only
+cells that actually produced a checkpoint. It prefers the highest numbered
+checkpoint and falls back to `step_latest.pt`. Predictions go to
+`BASE/preds/<run>/`.
+
+**The zoo's `i2i-inference` cannot load these checkpoints** — it rebuilds the
+config with `CycleGANConfig(**saved_cfg)`, which rejects the extra `topo` field,
+and then loads weights strictly, which rejects the `_topo_step` buffer. Both
+failures are pinned by tests. `topo-infer` does the same job with the right
+config class and otherwise follows the zoo's conventions: same transform, same
+`[-1,1] -> [0,1]` tile writer, batch size 1, `.tif` output.
+
 ## Sweeping the PH weights
 
 One sweep script per MIST marker — `slurm/sweep_ki67.sh`, `sweep_er.sh`,
