@@ -43,82 +43,19 @@ run_cmd() {
 }
 
 # -----------------------------
-# Grid: an explicit cell list, so duplicate combinations are simply absent.
-#
-#   lambda_cycle  {10, 0}          CycleGAN L1 cycle weight
-#   ph_cyc        {0, 1}           cycle-topology weight
-#   ph_trans      {0, 1}           translation-topology weight
-#   lambda_topo   {2e-4, 2e-2}     overall PH scale
-#   field_B       hematoxylin/dab | dab/hematoxylin | dab+hematoxylin (sum)
-#
-# field_A is fixed at hematoxylin/eosin. The '/' forms deconvolve; a bare stain
-# name projects and does NOT separate stains -- see fields.StainField.
-#
-# The full factorial is 48, but ph_cyc=0 AND ph_trans=0 switches off every
-# topological term, making lambda_topo and both fields inert -- those 12 collapse
-# to one anchor run per lambda_cycle. The 38 that remain are listed below.
-#
-#   tasks  0-18  lambda_cycle=10  (the critical path)
-#   tasks 19-37  lambda_cycle=0   (does topology substitute for L1 cycle?)
-#
-# Format: lambda_cycle:ph_cyc:ph_trans:lambda_topo:field_B:field_combine
+# Grid -- defined once in _grid.sh so training and inference agree on the cells
 # -----------------------------
 TASK_ID=${SLURM_ARRAY_TASK_ID:?submit with sbatch -- there is no array index to sweep over}
-
-CELLS=(
-  "10:0:0:0:hematoxylin/dab:max"   # anchor: no PH, fields inert
-  "10:0:1:0.0002:hematoxylin/dab:max"
-  "10:0:1:0.0002:dab/hematoxylin:max"
-  "10:0:1:0.0002:dab+hematoxylin:sum"
-  "10:0:1:0.02:hematoxylin/dab:max"
-  "10:0:1:0.02:dab/hematoxylin:max"
-  "10:0:1:0.02:dab+hematoxylin:sum"
-  "10:1:0:0.0002:hematoxylin/dab:max"
-  "10:1:0:0.0002:dab/hematoxylin:max"
-  "10:1:0:0.0002:dab+hematoxylin:sum"
-  "10:1:0:0.02:hematoxylin/dab:max"
-  "10:1:0:0.02:dab/hematoxylin:max"
-  "10:1:0:0.02:dab+hematoxylin:sum"
-  "10:1:1:0.0002:hematoxylin/dab:max"
-  "10:1:1:0.0002:dab/hematoxylin:max"
-  "10:1:1:0.0002:dab+hematoxylin:sum"
-  "10:1:1:0.02:hematoxylin/dab:max"
-  "10:1:1:0.02:dab/hematoxylin:max"
-  "10:1:1:0.02:dab+hematoxylin:sum"
-  "0:0:0:0:hematoxylin/dab:max"    # anchor: no PH, fields inert
-  "0:0:1:0.0002:hematoxylin/dab:max"
-  "0:0:1:0.0002:dab/hematoxylin:max"
-  "0:0:1:0.0002:dab+hematoxylin:sum"
-  "0:0:1:0.02:hematoxylin/dab:max"
-  "0:0:1:0.02:dab/hematoxylin:max"
-  "0:0:1:0.02:dab+hematoxylin:sum"
-  "0:1:0:0.0002:hematoxylin/dab:max"
-  "0:1:0:0.0002:dab/hematoxylin:max"
-  "0:1:0:0.0002:dab+hematoxylin:sum"
-  "0:1:0:0.02:hematoxylin/dab:max"
-  "0:1:0:0.02:dab/hematoxylin:max"
-  "0:1:0:0.02:dab+hematoxylin:sum"
-  "0:1:1:0.0002:hematoxylin/dab:max"
-  "0:1:1:0.0002:dab/hematoxylin:max"
-  "0:1:1:0.0002:dab+hematoxylin:sum"
-  "0:1:1:0.02:hematoxylin/dab:max"
-  "0:1:1:0.02:dab/hematoxylin:max"
-  "0:1:1:0.02:dab+hematoxylin:sum"
-)
-(( TASK_ID < ${#CELLS[@]} )) || { echo "task ${TASK_ID} is past the end of the ${#CELLS[@]}-cell grid" >&2; exit 1; }
-IFS=: read -r LAMBDA_CYCLE PH_CYC PH_TRANS CELL_TOPO CELL_FIELD_B CELL_COMBINE <<< "${CELLS[$TASK_ID]}"
+source "${REPO:-${SLURM_SUBMIT_DIR:-$PWD}}/slurm/_grid.sh"
+grid_select "$TASK_ID"
 
 # -----------------------------
 # Knobs: override at submit time with --export=ALL,NAME=value
 # -----------------------------
-FIELD_A=${FIELD_A:-hematoxylin/eosin}
-FIELD_B=${FIELD_B:-$CELL_FIELD_B}
-FIELD_COMBINE=${FIELD_COMBINE:-$CELL_COMBINE}
 STEPS=${STEPS:-400000}              # 8 epochs of ~50k tiles; fits one 48h slot
 BATCH_SIZE=${BATCH_SIZE:-1}
 SAVE_STEPS=${SAVE_STEPS:-100000}    # permanent checkpoints at 100k/200k/300k/400k
 IMAGE_SIZE=${IMAGE_SIZE:-256}
-LAMBDA_TOPO=${LAMBDA_TOPO:-$CELL_TOPO}
 TOPO_DOWNSAMPLE=${TOPO_DOWNSAMPLE:-1}
 TOPO_EVERY=${TOPO_EVERY:-2}
 TOPO_START=${TOPO_START:-100000}    # let the GAN find its footing first
@@ -147,8 +84,6 @@ DATA_B=${DATA_B:-${DATA_DIR}/trainB/}
 # tr rather than ${MARKER,,} so this stays portable to bash 3.x
 MARKER_LC=$(echo "$MARKER" | tr 'A-Z' 'a-z')
 BASE=${BASE:-/work2/bz66izin-TopoCG/Outputs_${MARKER_LC}}
-FIELD_B_TAG=${FIELD_B//\//-}          # '/' is not safe in a directory name
-RUN_NAME="${MARKER}_lc${LAMBDA_CYCLE}_lt${LAMBDA_TOPO}_cyc${PH_CYC}_trans${PH_TRANS}_${FIELD_B_TAG}"
 OUTPUT="${BASE}/results/${RUN_NAME}"
 
 mkdir -p "${OUTPUT}"

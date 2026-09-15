@@ -1,27 +1,37 @@
 #!/bin/bash
 #SBATCH --job-name=topo_infer
-#SBATCH --output=logs_topo/infer_%j.out
-#SBATCH --error=logs_topo/infer_%j.err
+#SBATCH --output=logs_topo/infer_%A_%a.out
+#SBATCH --error=logs_topo/infer_%A_%a.err
 
-#SBATCH --time=04:00:00
+#SBATCH --time=02:00:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
 #SBATCH --partition=clara
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
+#SBATCH --array=0-37  # same grid as the training sweep; see slurm/_grid.sh
 
-# Run validation inference for every cell of a marker's sweep.
+# Validation inference, one array task per sweep cell -- task N infers the model
+# that training task N produced, because both resolve the cell through
+# slurm/_grid.sh.
 #
-#   sbatch --export=ALL,MARKER=ER slurm/infer_sweep.sh
-#   MARKER=ER LIMIT=8 bash slurm/infer_sweep.sh     # quick look, 8 tiles per cell
+# Run once before the first submit:  mkdir -p logs_topo
 #
-# Run directories are discovered by globbing BASE/results rather than
-# recomputing cell names, so this stays correct if the grid changes and only
-# covers cells that actually produced a checkpoint.
+#   sbatch --export=ALL,MARKER=ER slurm/infer_sweep.sh                  # all 38
+#   sbatch --export=ALL,MARKER=ER --array=0-18 slurm/infer_sweep.sh     # lambda_cycle=10 only
+#   sbatch --export=ALL,MARKER=ER,LIMIT=8 --array=13 slurm/infer_sweep.sh
+#
+# Submit from the repository root so SLURM_SUBMIT_DIR locates _grid.sh, or
+# export REPO=/path/to/TopoCycleGAN.
 
 set -eo pipefail
 
 : "${MARKER:?set MARKER, e.g. --export=ALL,MARKER=ER}"
+TASK_ID=${SLURM_ARRAY_TASK_ID:?submit with sbatch -- there is no array index}
+
+REPO=${REPO:-${SLURM_SUBMIT_DIR:-$PWD}}
+source "${REPO}/slurm/_grid.sh"
+grid_select "$TASK_ID"
 
 if command -v module >/dev/null 2>&1; then
     module purge
@@ -40,43 +50,36 @@ DIRECTION=${DIRECTION:-A2B}
 IMAGE_SIZE=${IMAGE_SIZE:-256}
 LIMIT=${LIMIT:-0}
 
-echo "marker    ${MARKER}"
-echo "input     ${VAL_A}"
-echo "runs      ${BASE}/results"
-echo "output    ${BASE}/preds/<run>/"
-echo
+RUN_DIR="${BASE}/results/${RUN_NAME}"
+OUT_DIR="${BASE}/preds/${RUN_NAME}"
 
+echo "task ${TASK_ID}: ${RUN_NAME}"
+echo "  input  ${VAL_A}"
+echo "  run    ${RUN_DIR}"
+echo "  output ${OUT_DIR}"
+
+# Newest numbered checkpoint, else the rolling one. Collect with a glob into an
+# array -- piping a glob into `ls` lists the CWD when nothing matches, because
+# nullglob removes the argument entirely.
 shopt -s nullglob
-done_n=0; skipped_n=0
-for run_dir in "${BASE}"/results/*/; do
-    run=$(basename "$run_dir")
+CKPT=""
+CKPTS=( "${RUN_DIR}/checkpoints"/step_[0-9]*.pt )
+if (( ${#CKPTS[@]} )); then
+    CKPT=$(printf '%s\n' "${CKPTS[@]}" \
+           | sed 's/.*step_\([0-9]*\)\.pt/\1 &/' | sort -n | tail -1 | cut -d' ' -f2-)
+elif [ -f "${RUN_DIR}/checkpoints/step_latest.pt" ]; then
+    CKPT="${RUN_DIR}/checkpoints/step_latest.pt"
+fi
 
-    # Newest numbered checkpoint, else the rolling one. Collect with a glob into
-    # an array -- piping a glob into `ls` lists the CWD when nothing matches,
-    # because nullglob removes the argument entirely.
-    ckpt=""
-    ckpts=( "${run_dir}checkpoints"/step_[0-9]*.pt )
-    if (( ${#ckpts[@]} )); then
-        ckpt=$(printf '%s\n' "${ckpts[@]}" \
-               | sed 's/.*step_\([0-9]*\)\.pt/\1 &/' | sort -n | tail -1 | cut -d' ' -f2-)
-    elif [ -f "${run_dir}checkpoints/step_latest.pt" ]; then
-        ckpt="${run_dir}checkpoints/step_latest.pt"
-    fi
+# A cell that has not trained yet is not a failure -- exit clean so the array
+# task does not show up as failed.
+if [ -z "$CKPT" ]; then
+    echo "  no checkpoint yet; nothing to infer"
+    exit 0
+fi
 
-    if [ -z "$ckpt" ]; then
-        echo "[skip] ${run}: no checkpoint yet"
-        skipped_n=$((skipped_n+1))
-        continue
-    fi
+topo-infer --ckpt "$CKPT" --data "$VAL_A" --outdir "$OUT_DIR" \
+           --direction "$DIRECTION" --image-size "$IMAGE_SIZE" \
+           ${LIMIT:+--limit "$LIMIT"} --resume
 
-    out="${BASE}/preds/${run}"
-    echo "[run ] ${run}  <- $(basename "$ckpt")"
-    topo-infer --ckpt "$ckpt" --data "$VAL_A" --outdir "$out" \
-               --direction "$DIRECTION" --image-size "$IMAGE_SIZE" \
-               ${LIMIT:+--limit "$LIMIT"} --resume
-    done_n=$((done_n+1))
-done
-
-echo
-echo "inferred ${done_n} runs, skipped ${skipped_n} without checkpoints"
-echo "predictions under ${BASE}/preds/"
+echo "Done: ${RUN_NAME}"

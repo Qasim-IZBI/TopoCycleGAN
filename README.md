@@ -218,16 +218,18 @@ cycle and distribution term.
 ## Validation inference
 
 ```bash
-sbatch --export=ALL,MARKER=ER slurm/infer_sweep.sh     # every cell of the ER sweep
-MARKER=ER LIMIT=8 bash slurm/infer_sweep.sh            # quick look, 8 tiles per cell
-topo-infer --ckpt <ckpt> --data <tiles> --outdir <out> # one checkpoint
+sbatch --export=ALL,MARKER=ER slurm/infer_sweep.sh                # all 38 cells
+sbatch --export=ALL,MARKER=ER --array=0-18 slurm/infer_sweep.sh   # lambda_cycle=10 only
+sbatch --export=ALL,MARKER=ER,LIMIT=8 --array=13 slurm/infer_sweep.sh
+topo-infer --ckpt <ckpt> --data <tiles> --outdir <out>            # one checkpoint
 ```
 
-`infer_sweep.sh` discovers runs by globbing `BASE/results` rather than
-recomputing cell names, so it stays correct if the grid changes and covers only
-cells that actually produced a checkpoint. It prefers the highest numbered
-checkpoint and falls back to `step_latest.pt`. Predictions go to
-`BASE/preds/<run>/`.
+`infer_sweep.sh` uses **the same `--array` as the training sweep**: task N infers
+the model that training task N produced, because both resolve the cell through
+`slurm/_grid.sh`, which holds the cell list and the `RUN_NAME` derivation once.
+It prefers the highest numbered checkpoint and falls back to `step_latest.pt`; a
+cell that has not trained yet prints a note and exits 0, so it does not show up
+as a failed array task. Predictions go to `BASE/preds/<run>/`.
 
 **The zoo's `i2i-inference` cannot load these checkpoints** — it rebuilds the
 config with `CycleGANConfig(**saved_cfg)`, which rejects the extra `topo` field,
