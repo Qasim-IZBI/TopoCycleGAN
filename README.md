@@ -216,6 +216,28 @@ domain — this is not TopoGAN's distribution matching. TopoGAN's set-level OT l
 Each real domain's diagrams are computed once and shared between that domain's
 cycle and distribution term.
 
+## Choosing the fields before training
+
+MIST ships registered H&E/IHC pairs, so the topological distance has a ground
+truth to be tested against: a **true** pair must score below a **random** one. If
+it does not, that field choice carries no information about correspondence and
+cannot teach `ph_trans` anything, however `lambda_topo` is set.
+
+```bash
+topo-validate-fields --dataA tiles/ER/TrainValAB/valA --dataB tiles/ER/TrainValAB/valB \
+    --field-A hematoxylin/eosin \
+    --field-B hematoxylin/dab dab/hematoxylin dab+hematoxylin
+```
+
+It scores the cross product of the specs given, so one run ranks every candidate
+in minutes rather than committing GPU-weeks to find out. The headline number is
+AUROC — the probability a true pair scores below a shuffled one. 0.5 is useless,
+1.0 is perfect separation. Tiles are matched by filename, with a loud warning if
+the two directories share none.
+
+Diagrams are computed once per image per spec and reused across combinations, so
+adding specs is cheap relative to the first one.
+
 ## Validation inference
 
 ```bash

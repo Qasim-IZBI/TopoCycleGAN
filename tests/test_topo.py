@@ -712,3 +712,82 @@ def test_split_is_off_by_default():
     assert TopoConfig().ph_cyc_split is False
     from topo_i2i.train import build_parser
     assert build_parser().parse_args("--dataA a --dataB b".split()).ph_cyc_split is False
+
+
+# --- field validation against registered pairs ---------------------------- #
+
+def test_auroc_endpoints():
+    from topo_i2i.validate_fields import auroc
+    assert auroc([1, 2], [3, 4]) == pytest.approx(1.0)      # true always lower
+    assert auroc([3, 4], [1, 2]) == pytest.approx(0.0)      # always higher
+    assert auroc([1, 1], [1, 1]) == pytest.approx(0.5)      # all ties
+    assert auroc([1, 3], [2, 4]) == pytest.approx(0.75)
+
+
+def test_matched_pairs_uses_filenames(tmp_path):
+    from topo_i2i.validate_fields import matched_pairs
+    a, b = tmp_path/"A", tmp_path/"B"
+    a.mkdir(); b.mkdir()
+    for name in ("t1.png", "t2.png", "t3.png"):
+        _write_image(str(a/name)); _write_image(str(b/name))
+    _write_image(str(a/"only_in_a.png"))
+    pairs, how = matched_pairs(str(a), str(b))
+    assert len(pairs) == 3 and "by filename" in how
+    assert all(x == y for x, y in pairs)
+
+
+def test_matched_pairs_warns_when_names_differ(tmp_path):
+    from topo_i2i.validate_fields import matched_pairs
+    a, b = tmp_path/"A", tmp_path/"B"
+    a.mkdir(); b.mkdir()
+    _write_image(str(a/"x1.png")); _write_image(str(b/"y1.png"))
+    pairs, how = matched_pairs(str(a), str(b))
+    assert len(pairs) == 1 and "WARNING" in how
+
+
+def test_matched_pairs_respects_limit(tmp_path):
+    from topo_i2i.validate_fields import matched_pairs
+    a, b = tmp_path/"A", tmp_path/"B"
+    a.mkdir(); b.mkdir()
+    for i in range(5):
+        _write_image(str(a/("t%d.png" % i))); _write_image(str(b/("t%d.png" % i)))
+    assert len(matched_pairs(str(a), str(b), limit=2)[0]) == 2
+
+
+def test_registered_pairs_score_below_shuffled():
+    """The property the whole check rests on, on data where truth is known."""
+    import numpy as np
+    from topo_i2i.fields import STAIN_VECTORS
+    from topo_i2i.persistence import persistence_diagram
+    from topo_i2i.losses import diagram_distance
+    from topo_i2i.fields import make_field
+    from topo_i2i.validate_fields import auroc
+
+    H = np.array(STAIN_VECTORS["hematoxylin"]); H /= np.linalg.norm(H)
+    D = np.array(STAIN_VECTORS["dab"]);         D /= np.linalg.norm(D)
+    n = 64
+    yy, xx = np.mgrid[0:n, 0:n]
+
+    def tile(seed):
+        r = np.random.default_rng(seed)
+        cs = r.integers(6, n-6, (r.integers(6, 16), 2))
+        pos = r.random(len(cs)) < 0.4
+        he, ihc = np.zeros((n, n, 3)), np.zeros((n, n, 3))
+        for (cy, cx), p in zip(cs, pos):
+            b = np.exp(-(((xx-cx)**2 + (yy-cy)**2)/(2*2.5**2)))[..., None]
+            he += b*H
+            ihc += b*(D if p else H)
+        to = lambda od: torch.tensor(np.clip(10**(-od), 0, 1),
+                                     dtype=torch.float32).permute(2, 0, 1)[None]*2-1
+        return to(he), to(ihc)
+
+    fa, fb = make_field("hematoxylin/eosin"), make_field("dab+hematoxylin", "sum")
+    tiles = [tile(s) for s in range(8)]
+    da = [persistence_diagram(-fa(h)[0].double(), (0, 1)) for h, _ in tiles]
+    db = [persistence_diagram(-fb(i)[0].double(), (0, 1)) for _, i in tiles]
+
+    true = [float(diagram_distance(da[i], db[i], (0, 1))) for i in range(8)]
+    shuf = [float(diagram_distance(da[i], db[j], (0, 1)))
+            for i in range(8) for j in range(8) if i != j]
+    assert np.mean(true) < np.mean(shuf)
+    assert auroc(true, shuf) > 0.75

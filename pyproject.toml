@@ -29,6 +29,7 @@ dev = ["pytest>=7.4"]
 topo-train = "topo_i2i.train:main"
 topo-crop = "topo_i2i.crop:main"
 topo-infer = "topo_i2i.inference:main"
+topo-validate-fields = "topo_i2i.validate_fields:main"
 
 [tool.setuptools.packages.find]
 include = ["topo_i2i*"]
