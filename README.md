@@ -229,6 +229,14 @@ topo-validate-fields --dataA tiles/ER/TrainValAB/valA --dataB tiles/ER/TrainValA
     --field-B hematoxylin/dab dab/hematoxylin dab+hematoxylin
 ```
 
+`--dims-set` and `--topo-projection` take lists too, and are **nearly free** to
+sweep: diagrams always carry both homology dimensions, and the projection only
+changes how they are compared, so both reuse the cached diagrams. Only the field
+specs and `--downsample` change the diagrams themselves and cost real time.
+
+Keep `auto` in the projection list — it is what training uses, so without it the
+winner cannot be compared against your current setting.
+
 `--downsample` takes a list too, so resolution joins the cross product. That
 matters for cost: persistence scales with pixel count, so if a coarser field
 holds the same AUROC it is free signal — train at that `--topo-downsample`
@@ -236,8 +244,10 @@ instead. Raw distances are *not* comparable across factors (the sum runs over
 more diagram points at finer resolution), but AUROC is, which is why it is the
 column to steer by.
 
-It scores the cross product of the specs given, so one run ranks every candidate
-in minutes rather than committing GPU-weeks to find out. The headline number is
+It scores the cross product of everything given — a 3x3x3x3x3 sweep is 324
+combinations and runs in seconds on 24 tiles — rather than committing GPU-weeks
+to find out. With that many combinations the top row is partly luck, so the tool
+says so and you should re-score the leaders on held-out tiles. The headline number is
 AUROC — the probability a true pair scores below a shuffled one. 0.5 is useless,
 1.0 is perfect separation. Tiles are matched by filename, with a loud warning if
 the two directories share none.

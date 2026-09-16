@@ -799,3 +799,13 @@ def test_validate_fields_sweeps_downsample():
         "--dataA a --dataB b --downsample 1 2 4".split())
     assert ns.downsample == [1, 2, 4]
     assert build_parser().parse_args("--dataA a --dataB b".split()).downsample == [1]
+
+
+def test_validate_fields_sweeps_dims_and_projection():
+    from topo_i2i.validate_fields import build_parser
+    ns = build_parser().parse_args(
+        "--dataA a --dataB b --dims-set 0 1 0,1 --topo-projection auto birth".split())
+    assert ns.dims_set == ["0", "1", "0,1"]
+    assert ns.topo_projection == ["auto", "birth"]
+    d = build_parser().parse_args("--dataA a --dataB b".split())
+    assert d.dims_set == ["0,1"] and d.topo_projection == ["auto"]

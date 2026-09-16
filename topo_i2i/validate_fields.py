@@ -107,9 +107,17 @@ def build_parser() -> argparse.ArgumentParser:
                         "falls roughly with the pixel count, so if a coarser "
                         "field keeps the same AUROC it is free signal: train at "
                         "that --topo-downsample instead")
-    p.add_argument("--topo-dims", type=int, nargs="+", default=[0, 1])
-    p.add_argument("--topo-projection", default="auto",
-                   choices=("auto", "birth", "lifetime", "death"))
+    # Diagrams always carry both homology dimensions, and the projection only
+    # changes how they are compared -- so these two axes reuse the cached
+    # diagrams and cost essentially nothing to sweep. Only the field specs and
+    # --downsample change the diagrams themselves.
+    p.add_argument("--dims-set", nargs="+", default=["0,1"], metavar="SET",
+                   help="homology dimensions to score, comma-joined: 0 1 0,1")
+    p.add_argument("--topo-projection", nargs="+", default=["auto"],
+                   choices=("auto", "birth", "lifetime", "death"),
+                   help="'auto' (lifetime for H0, birth for H1) is what training "
+                        "uses -- keep it in the sweep or the winner cannot be "
+                        "compared against your current setting")
     p.add_argument("--shuffles", type=int, default=5,
                    help="random permutations to average the shuffled baseline over")
     p.add_argument("--no-invert", action="store_true")
@@ -119,8 +127,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
-    dims = tuple(args.topo_dims)
-    proj = None if args.topo_projection == "auto" else args.topo_projection
+    dim_sets = [tuple(int(x) for x in ds.split(",")) for ds in args.dims_set]
+    all_dims = tuple(sorted({d for ds in dim_sets for d in ds}))
     invert = not args.no_invert
 
     pairs, how = matched_pairs(args.dataA, args.dataB, args.limit)
@@ -143,36 +151,45 @@ def main() -> None:
     for ds in args.downsample:
         for spec in args.field_A:
             cache[("A", spec, ds)] = diagrams_for(paths_a, spec, args.field_combine,
-                                                  args.image_size, ds, dims, invert)
+                                                  args.image_size, ds, all_dims, invert)
         for spec in args.field_B:
             cache[("B", spec, ds)] = diagrams_for(paths_b, spec, args.field_combine,
-                                                  args.image_size, ds, dims, invert)
+                                                  args.image_size, ds, all_dims, invert)
 
-    print("\n%d tiles, dims=%s, projection=%s\n" % (n, list(dims), args.topo_projection))
-    header = "%-20s %-18s %3s %9s %9s %7s %7s" % (
-        "field_A", "field_B", "ds", "true", "shuffled", "ratio", "AUROC")
+    combos = list(itertools.product(args.field_A, args.field_B, args.downsample,
+                                    dim_sets, args.topo_projection))
+    print("\n%d tiles, %d combinations\n" % (n, len(combos)))
+    header = "%-20s %-18s %3s %5s %-9s %9s %9s %7s %7s" % (
+        "field_A", "field_B", "ds", "dims", "proj", "true", "shuffled", "ratio", "AUROC")
     print(header); print("-" * len(header))
 
     rows = []
-    for fa, fb, ds in itertools.product(args.field_A, args.field_B, args.downsample):
+    for fa, fb, ds, dims, projname in combos:
+        proj = None if projname == "auto" else projname
         da, db = cache[("A", fa, ds)], cache[("B", fb, ds)]
         true = [float(diagram_distance(da[i], db[i], dims, proj)) for i in range(n)]
         shuf = [float(diagram_distance(da[i], db[p[i]], dims, proj))
                 for p in perms for i in range(n)]
         mt, ms = float(np.mean(true)), float(np.mean(shuf))
-        row = (fa, fb, ds, mt, ms, ms / mt if mt else float("inf"), auroc(true, shuf))
+        row = (fa, fb, ds, ",".join(map(str, dims)), projname,
+               mt, ms, ms / mt if mt else float("inf"), auroc(true, shuf))
         rows.append(row)
-        print("%-20s %-18s %3d %9.2f %9.2f %7.2f %7.3f" % row)
+        print("%-20s %-18s %3d %5s %-9s %9.2f %9.2f %7.2f %7.3f" % row)
 
-    best = max(rows, key=lambda r: r[6])
-    print("\nbest separation: %s / %s at --topo-downsample %d  (AUROC %.3f)"
-          % (best[0], best[1], best[2], best[6]))
+    best = max(rows, key=lambda r: r[8])
+    print("\nbest:     %s / %s  ds=%d dims=%s proj=%s  (AUROC %.3f)"
+          % (best[0], best[1], best[2], best[3], best[4], best[8]))
     # Raw distances are not comparable across downsample factors -- the sum runs
     # over more diagram points at finer resolution -- but AUROC is.
-    coarsest = max((r for r in rows if r[6] >= best[6] - 0.01), key=lambda r: r[2])
-    if coarsest[2] > best[2]:
-        print("cheapest within 0.01 AUROC: %s / %s at --topo-downsample %d (AUROC %.3f)"
-              % (coarsest[0], coarsest[1], coarsest[2], coarsest[6]))
+    near = [r for r in rows if r[8] >= best[8] - 0.01]
+    cheapest = max(near, key=lambda r: r[2])
+    if cheapest[2] > best[2]:
+        print("cheapest within 0.01 AUROC: %s / %s ds=%d dims=%s proj=%s (AUROC %.3f)"
+              % (cheapest[0], cheapest[1], cheapest[2], cheapest[3], cheapest[4], cheapest[8]))
+    if len(rows) > 10:
+        print("\nNOTE: %d combinations were scored on %d tiles. The top row is partly "
+              "luck;\n      re-run the leaders on a held-out set of tiles before "
+              "trusting the ranking." % (len(rows), n))
     print("AUROC 0.5 means the distance says nothing about which tiles belong together;")
     print("a field pair that cannot separate true from random here will not teach")
     print("ph_trans anything during training.")
