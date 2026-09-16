@@ -99,6 +99,20 @@ def diagrams_for(paths, spec, combine, size, downsample, dims, invert):
     return out
 
 
+def auroc_se(a: float, n1: int, n2: int) -> float:
+    """Hanley-McNeil standard error of an AUROC.
+
+    The naive sqrt(0.5/n) is far too pessimistic here: it ignores the size of
+    the shuffled sample and assumes the worst case at A=0.5.
+    """
+    if n1 < 2 or n2 < 2:
+        return float("nan")
+    q1 = a / (2.0 - a)
+    q2 = 2.0 * a * a / (1.0 + a)
+    var = (a * (1 - a) + (n1 - 1) * (q1 - a * a) + (n2 - 1) * (q2 - a * a)) / (n1 * n2)
+    return float(max(var, 0.0) ** 0.5)
+
+
 def auroc(true_scores, shuffled_scores) -> float:
     """P(a true pair scores below a shuffled one), ties counted as half."""
     t = np.asarray(true_scores)[:, None]
@@ -219,12 +233,14 @@ def main() -> None:
         print("cheapest within 0.01 AUROC: %s / %s ds=%d dims=%s proj=%s (AUROC %.3f)"
               % (cheapest[0], cheapest[1], cheapest[2], cheapest[3], cheapest[4], cheapest[8]))
     if len(rows) > 10:
-        print("\nNOTE: %d combinations on %d tiles. At this sample size the leading "
-              "rows are\n      statistically tied (95%% band is roughly +/-%.3f), so "
-              "the top one is partly\n      luck. Re-score the leaders with "
-              "--offset %d --seed %d on a disjoint slice."
-              % (len(rows), n, 1.96 * (0.5 / max(n, 1)) ** 0.5,
-                 args.offset + n, args.seed))
+        se = auroc_se(best[8], n, n * args.shuffles)
+        print("\nNOTE: %d combinations on %d tiles. The 95%% band on the best AUROC is "
+              "+/-%.3f,\n      and taking the maximum over many correlated "
+              "combinations inflates it further,\n      so treat the top row as an "
+              "upper bound rather than a measurement. What to\n      trust is a "
+              "setting that ranks well CONSISTENTLY -- across markers, and on a\n"
+              "      disjoint slice: re-score the leaders with --offset %d --seed %d."
+              % (len(rows), n, 1.96 * se, args.offset + n, args.seed))
     print("AUROC 0.5 means the distance says nothing about which tiles belong together;")
     print("a field pair that cannot separate true from random here will not teach")
     print("ph_trans anything during training.")

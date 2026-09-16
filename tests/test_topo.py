@@ -862,3 +862,15 @@ def test_sample_mode_is_validated(tmp_path):
     _write_image(str(a/"t.png")); _write_image(str(b/"t.png"))
     with pytest.raises(ValueError, match="sample must be"):
         matched_pairs(str(a), str(b), sample="nonsense")
+
+
+def test_auroc_se_matches_a_bootstrap():
+    """Hanley-McNeil SE should track the empirical spread, not sqrt(0.5/n)."""
+    import numpy as np
+    from topo_i2i.validate_fields import auroc, auroc_se
+    rng = np.random.default_rng(0)
+    draws = [auroc(rng.normal(0, 1, 128), rng.normal(0.36, 1, 640)) for _ in range(400)]
+    empirical = float(np.std(draws))
+    predicted = auroc_se(float(np.mean(draws)), 128, 640)
+    assert predicted == pytest.approx(empirical, abs=0.01)
+    assert predicted < 0.5 * (0.5 / 128) ** 0.5      # far tighter than the naive bound
