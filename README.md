@@ -216,6 +216,36 @@ domain — this is not TopoGAN's distribution matching. TopoGAN's set-level OT l
 Each real domain's diagrams are computed once and shared between that domain's
 cycle and distribution term.
 
+## Estimating stain vectors
+
+The vectors in `fields.STAIN_VECTORS` are literature defaults, fitted to nobody's
+slides. For a model that has to work across staining combinations, estimate them
+from the training tiles instead (Macenko et al., 2009 — the method behind
+QuPath's *Estimate stain vectors → Auto*):
+
+```bash
+topo-estimate-stains --dataA tiles/ER/TrainValAB/trainA \
+                     --dataB tiles/ER/TrainValAB/trainB \
+                     --out runs/stains_ER.json
+```
+
+Estimate **once**, from TRAIN, and reuse the JSON everywhere downstream.
+Re-estimating per run — or per batch — makes the loss non-stationary and puts a
+discontinuity in the middle of a requeued job.
+
+Once vectors come from data, stain *names* stop meaning anything, so field specs
+become positional: `stain1/stain2`, `stain2/stain1`, `stain1+stain2`. Domain B's
+pair is ordered against domain A's first stain, so channel 1 means the same thing
+in both domains rather than depending on a per-domain heuristic; `--pin-shared`
+goes further and forces them equal, trading fidelity to domain B's own colours
+for exact comparability. The estimator warns if a domain's two stains come out
+closer than 15 degrees, which is what a cohort with too little of one stain looks
+like.
+
+`slurm/estimate_and_validate.sh` does both steps per marker — estimate on train,
+score field combinations on val — writing `stains_<marker>.json` (report these in
+the paper) and `fields_<marker>.txt`.
+
 ## Choosing the fields before training
 
 MIST ships registered H&E/IHC pairs, so the topological distance has a ground

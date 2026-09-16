@@ -33,6 +33,7 @@ import torch
 from PIL import Image
 
 from topo_i2i.fields import make_field
+from topo_i2i.stains import load_vectors
 from topo_i2i.losses import diagram_distance
 from topo_i2i.persistence import persistence_diagram
 
@@ -139,9 +140,9 @@ def load(path: str, size: int) -> torch.Tensor:
     return torch.from_numpy(a).permute(2, 0, 1)[None] * 2 - 1
 
 
-def diagrams_for(paths, spec, combine, size, downsample, dims, invert):
+def diagrams_for(paths, spec, combine, size, downsample, dims, invert, vectors=None):
     """One diagram per image for a given field spec (the expensive step)."""
-    field = make_field(spec, combine)
+    field = make_field(spec, combine, vectors=vectors)
     out = []
     for p in paths:
         x = load(p, size)
@@ -178,6 +179,10 @@ def build_parser() -> argparse.ArgumentParser:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--dataA", required=True, help="H&E tiles (registered with dataB)")
     p.add_argument("--dataB", required=True, help="IHC tiles of the same tissue")
+    p.add_argument("--stains", default=None, metavar="JSON",
+                   help="stain vectors from topo-estimate-stains. With this, use "
+                        "specs built from 'stain1'/'stain2' -- each domain gets "
+                        "its own estimated pair")
     p.add_argument("--field-A", nargs="+", default=["hematoxylin/eosin"],
                    metavar="SPEC", help="one or more domain-A specs to score")
     p.add_argument("--field-B", nargs="+",
@@ -240,6 +245,18 @@ def main() -> None:
     all_dims = tuple(sorted({d for ds in dim_sets for d in ds}))
     invert = not args.no_invert
 
+    vectors = {"A": None, "B": None}
+    if args.stains:
+        vecs, raw = load_vectors(args.stains)
+        vectors = vecs
+        print("stain vectors from %s" % args.stains)
+        for dom in ("A", "B"):
+            print("  %s stain1 %s  stain2 %s  (%.1f deg apart)"
+                  % (dom, np.round(vecs[dom]["stain1"], 4),
+                     np.round(vecs[dom]["stain2"], 4), raw[dom]["separation_deg"]))
+        for w in raw.get("meta", {}).get("warnings", []):
+            print("  [WARN] %s" % w)
+
     pairs, how = matched_pairs(args.dataA, args.dataB, args.limit, args.offset,
                                args.sample, args.seed)
     if not pairs:
@@ -273,10 +290,12 @@ def main() -> None:
     for ds in args.downsample:
         for spec in args.field_A:
             cache[("A", spec, ds)] = diagrams_for(paths_a, spec, args.field_combine,
-                                                  args.image_size, ds, all_dims, invert)
+                                                  args.image_size, ds, all_dims, invert,
+                                                  vectors["A"])
         for spec in args.field_B:
             cache[("B", spec, ds)] = diagrams_for(paths_b, spec, args.field_combine,
-                                                  args.image_size, ds, all_dims, invert)
+                                                  args.image_size, ds, all_dims, invert,
+                                                  vectors["B"])
 
     combos = list(itertools.product(args.field_A, args.field_B, args.downsample,
                                     dim_sets, args.topo_projection))

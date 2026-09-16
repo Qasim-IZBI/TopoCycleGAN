@@ -56,9 +56,11 @@ class StainField(nn.Module):
     for a full 3x3 deconvolution when only one channel is needed.
     """
 
-    def __init__(self, stain="hematoxylin", eps: float = 1e-3, in_range=(-1.0, 1.0)):
+    def __init__(self, stain="hematoxylin", eps: float = 1e-3, in_range=(-1.0, 1.0),
+                 vectors=None):
         super().__init__()
-        vec = STAIN_VECTORS[stain] if isinstance(stain, str) else stain
+        table = STAIN_VECTORS if vectors is None else dict(STAIN_VECTORS, **vectors)
+        vec = table[stain] if isinstance(stain, str) else stain
         self.register_buffer("vec", torch.from_numpy(_unit(vec)).view(1, 3, 1, 1))
         self.eps = eps
         self.in_range = in_range
@@ -94,14 +96,15 @@ class DeconvolutionField(nn.Module):
     """
 
     def __init__(self, stains=("hematoxylin", "dab"), combine: str = "max",
-                 eps: float = 1e-3, in_range=(-1.0, 1.0), channel=None):
+                 eps: float = 1e-3, in_range=(-1.0, 1.0), channel=None, vectors=None):
         """`channel=None` merges both stains with `combine`; `channel=0` or `1`
         returns that stain's concentration alone, with the other one solved for
         and removed."""
         super().__init__()
         if len(stains) != 2:
             raise ValueError("expected exactly two stains, got %r" % (stains,))
-        v1, v2 = (_unit(STAIN_VECTORS[s] if isinstance(s, str) else s) for s in stains)
+        table = STAIN_VECTORS if vectors is None else dict(STAIN_VECTORS, **vectors)
+        v1, v2 = (_unit(table[s] if isinstance(s, str) else s) for s in stains)
         residual = np.cross(v1, v2)
         residual = residual / np.linalg.norm(residual)
         matrix = np.stack([v1, v2, residual], axis=1)          # columns = stains
@@ -131,7 +134,8 @@ class DeconvolutionField(nn.Module):
         return conc.mean(dim=1)
 
 
-def make_field(spec: str, combine: str = "max", in_range=(-1.0, 1.0)) -> nn.Module:
+def make_field(spec: str, combine: str = "max", in_range=(-1.0, 1.0),
+               vectors=None) -> nn.Module:
     """Build the scalar-field module named by `spec`.
 
         'gray'                luminance, no stain assumption
@@ -140,6 +144,10 @@ def make_field(spec: str, combine: str = "max", in_range=(-1.0, 1.0)) -> nn.Modu
                               removed -- the correct way to get one channel
         'dab+hematoxylin'     deconvolve the pair and merge both channels with
                               `combine`
+        'stain1/stain2'       the same, with vectors supplied by the caller --
+                              how estimated (Macenko) vectors are used, since
+                              stain NAMES stop meaning anything once the vectors
+                              come from data
         'dab'                 bare projection onto one vector. Does NOT separate
                               stains (see StainField); kept for completeness,
                               not recommended.
@@ -148,10 +156,12 @@ def make_field(spec: str, combine: str = "max", in_range=(-1.0, 1.0)) -> nn.Modu
         return _GrayField(in_range)
     if "/" in spec:
         want, other = spec.split("/", 1)
-        return DeconvolutionField((want, other), in_range=in_range, channel=0)
+        return DeconvolutionField((want, other), in_range=in_range, channel=0,
+                                  vectors=vectors)
     if "+" in spec:
-        return DeconvolutionField(tuple(spec.split("+")), combine=combine, in_range=in_range)
-    return StainField(spec, in_range=in_range)
+        return DeconvolutionField(tuple(spec.split("+")), combine=combine,
+                                  in_range=in_range, vectors=vectors)
+    return StainField(spec, in_range=in_range, vectors=vectors)
 
 
 class _GrayField(nn.Module):

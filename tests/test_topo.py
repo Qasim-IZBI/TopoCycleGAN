@@ -943,3 +943,95 @@ def test_slide_regex_controls_the_grouping():
     from topo_i2i.validate_fields import slide_of
     assert slide_of("caseA_tile03_r1c0.png") == "caseA_tile03"
     assert slide_of("caseA_tile03_r1c0.png", r"_tile\d+_r\d+c\d+$") == "caseA"
+
+
+# --- Macenko stain estimation --------------------------------------------- #
+
+def _stain_tile(path, v1, v2, seed, n=128):
+    import numpy as np
+    from PIL import Image
+    yy, xx = np.mgrid[0:n, 0:n]
+    r = np.random.default_rng(seed)
+    od = np.zeros((n, n, 3))
+    for _ in range(40):
+        cy, cx = r.integers(5, n-5, 2)
+        od += np.exp(-(((xx-cx)**2 + (yy-cy)**2)/(2*3.0**2)))[..., None]*v1*r.uniform(.6, 1.3)
+    for _ in range(15):
+        cy, cx = r.integers(5, n-5, 2)
+        od += np.exp(-(((xx-cx)**2 + (yy-cy)**2)/(2*8.0**2)))[..., None]*v2*r.uniform(.3, .8)
+    Image.fromarray((np.clip(10**(-od), 0, 1)*255).astype("uint8")).save(path)
+
+
+def test_estimation_recovers_known_vectors(tmp_path):
+    import numpy as np
+    from topo_i2i.fields import STAIN_VECTORS
+    from topo_i2i.stains import estimate_for_run, angle_between
+    H = np.array(STAIN_VECTORS["hematoxylin"]); H /= np.linalg.norm(H)
+    E = np.array(STAIN_VECTORS["eosin"]);       E /= np.linalg.norm(E)
+    D = np.array(STAIN_VECTORS["dab"]);         D /= np.linalg.norm(D)
+    a, b = tmp_path/"A", tmp_path/"B"
+    a.mkdir(); b.mkdir()
+    for i in range(12):
+        _stain_tile(str(a/("t%02d.png" % i)), H, E, i)
+        _stain_tile(str(b/("t%02d.png" % i)), H, D, i+500)
+
+    res = estimate_for_run(str(a), str(b), limit=12)
+    assert angle_between(res["A"]["stain1"], H) < 3.0
+    assert angle_between(res["A"]["stain2"], E) < 3.0
+    assert angle_between(res["B"]["stain2"], D) < 3.0
+    # both domains' channel 1 must mean the same thing
+    assert res["meta"]["shared_stain_angle_deg"] < 3.0
+
+
+def test_order_like_uses_the_reference():
+    import numpy as np
+    from topo_i2i.stains import order_like
+    a = np.array([1.0, 0.0, 0.0]); b = np.array([0.0, 1.0, 0.0])
+    assert np.allclose(order_like((a, b), reference=b)[0], b)
+    assert np.allclose(order_like((b, a), reference=b)[0], b)
+    # with no reference, the larger red component leads
+    assert np.allclose(order_like((b, a))[0], a)
+
+
+def test_pin_shared_forces_the_domains_to_agree(tmp_path):
+    import numpy as np
+    from topo_i2i.fields import STAIN_VECTORS
+    from topo_i2i.stains import estimate_for_run
+    H = np.array(STAIN_VECTORS["hematoxylin"]); H /= np.linalg.norm(H)
+    E = np.array(STAIN_VECTORS["eosin"]);       E /= np.linalg.norm(E)
+    D = np.array(STAIN_VECTORS["dab"]);         D /= np.linalg.norm(D)
+    a, b = tmp_path/"A", tmp_path/"B"
+    a.mkdir(); b.mkdir()
+    for i in range(12):
+        _stain_tile(str(a/("t%02d.png" % i)), H, E, i)
+        _stain_tile(str(b/("t%02d.png" % i)), H*0.97 + 0.03, D, i+500)
+    res = estimate_for_run(str(a), str(b), limit=12, pin_shared=True)
+    assert res["A"]["stain1"] == res["B"]["stain1"]
+    assert res["meta"]["shared_stain_angle_deg"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_estimated_vectors_reach_the_field(tmp_path):
+    """make_field must use caller-supplied vectors, not the built-in table."""
+    import numpy as np
+    from topo_i2i.fields import make_field, STAIN_VECTORS
+    custom = {"stain1": (0.1, 0.2, 0.97), "stain2": (0.9, 0.3, 0.3)}
+    f = make_field("stain1/stain2", vectors=custom)
+    v = np.array(custom["stain1"]); v /= np.linalg.norm(v)
+    px = torch.tensor(np.power(10.0, -v), dtype=torch.float32).view(1, 3, 1, 1)*2-1
+    assert f(px).item() == pytest.approx(1.0, abs=1e-3)
+    with pytest.raises(KeyError):
+        make_field("stain1/stain2")          # unknown without the vectors
+
+
+def test_low_separation_is_warned(tmp_path):
+    import numpy as np
+    from topo_i2i.stains import estimate_for_run
+    v1 = np.array([0.60, 0.70, 0.38]); v1 /= np.linalg.norm(v1)
+    v2 = np.array([0.62, 0.70, 0.35]); v2 /= np.linalg.norm(v2)   # nearly parallel
+    a, b = tmp_path/"A", tmp_path/"B"
+    a.mkdir(); b.mkdir()
+    for i in range(10):
+        _stain_tile(str(a/("t%02d.png" % i)), v1, v2, i)
+        _stain_tile(str(b/("t%02d.png" % i)), v1, v2, i+500)
+    res = estimate_for_run(str(a), str(b), limit=10, min_separation=15.0)
+    assert any("deg apart" in w for w in res["meta"]["warnings"])
