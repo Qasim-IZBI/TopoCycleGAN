@@ -224,10 +224,18 @@ it does not, that field choice carries no information about correspondence and
 cannot teach `ph_trans` anything, however `lambda_topo` is set.
 
 ```bash
+sbatch slurm/validate_fields.sh                  # all four markers
+sbatch --export=ALL,MARKERS=ER slurm/validate_fields.sh                    # one marker
+MARKERS=ER LIMIT=32 bash slurm/validate_fields.sh                          # locally
+
 topo-validate-fields --dataA tiles/ER/TrainValAB/valA --dataB tiles/ER/TrainValAB/valB \
     --field-A hematoxylin/eosin \
     --field-B hematoxylin/dab dab/hematoxylin dab+hematoxylin
 ```
+
+`slurm/validate_fields.sh` runs the full grid for each marker and writes
+`field_validation/fields_<marker>.txt`. It requests **no GPU** — persistence is
+CPU-only — and skips a marker whose `valA`/`valB` are missing.
 
 `--dims-set` and `--topo-projection` take lists too, and are **nearly free** to
 sweep: diagrams always carry both homology dimensions, and the projection only
