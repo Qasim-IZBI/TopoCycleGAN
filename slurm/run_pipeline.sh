@@ -13,6 +13,15 @@
 
 set -euo pipefail
 
+# This is a SUBMITTER, not a job: it has no #SBATCH directives and calls sbatch
+# itself. Running it under sbatch would burn an allocation on cluster defaults
+# (wrong partition, no account) just to issue four sbatch calls.
+if [ -n "${SLURM_JOB_ID:-}" ]; then
+    echo "ERROR: run this with 'bash slurm/run_pipeline.sh', not 'sbatch'." >&2
+    echo "It is a submitter script -- it submits the jobs for you." >&2
+    exit 1
+fi
+
 MARKERS=${MARKERS:-"Ki67 ER HER2 PR"}
 STAINS_DIR=${STAINS_DIR:-/work2/bz66izin-TopoCG/field_validation_estimated}
 SKIP_ESTIMATE=${SKIP_ESTIMATE:-0}
