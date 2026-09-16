@@ -259,6 +259,13 @@ compete for the maximum. The whole 4000-tile val set buys +/-0.003 and costs
 ~1.6 h per marker, which cannot change which field you pick. Distances, not
 diagrams, dominate that cost.
 
+Tiles are sampled **at random** by default, because they are named
+`<slide>_r<row>c<col>` — taking them in filename order (`--sample head`) would
+draw every crop of the first few slides rather than a spread across the cohort.
+The permutation is seeded, so `--offset` still carves an exactly disjoint second
+sample **provided `--seed` is unchanged**; a different seed re-permutes and the
+slices overlap.
+
 Then re-score only the leading rows with `--offset 128` on a disjoint slice. At
 128 tiles the top ten rows are statistically tied, so the screen's job is to
 eliminate everything near 0.5 and surface a cluster of good cheap settings, not

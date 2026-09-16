@@ -822,3 +822,43 @@ def test_matched_pairs_offset_gives_a_disjoint_slice(tmp_path):
     assert len(first) == len(second) == 4
     assert not (set(f for f, _ in first) & set(f for f, _ in second))
     assert "skipping the first 4" in how
+
+
+def test_random_sampling_spans_the_directory(tmp_path):
+    """head takes all crops of the first slides; random spreads across them."""
+    from topo_i2i.validate_fields import matched_pairs
+    a, b = tmp_path/"A", tmp_path/"B"
+    a.mkdir(); b.mkdir()
+    for slide in range(10):
+        for crop in range(4):
+            name = "s%02d_r%dc0.png" % (slide, crop)
+            _write_image(str(a/name)); _write_image(str(b/name))
+
+    slides = lambda pairs: {f.split("_")[0] for f, _ in pairs}
+    head, _ = matched_pairs(str(a), str(b), limit=8, sample="head")
+    rand, _ = matched_pairs(str(a), str(b), limit=8, sample="random", seed=0)
+    assert len(slides(head)) == 2          # 8 crops = only the first 2 slides
+    assert len(slides(rand)) > 2           # spread over more
+
+
+def test_offset_is_disjoint_only_with_the_same_seed(tmp_path):
+    from topo_i2i.validate_fields import matched_pairs
+    a, b = tmp_path/"A", tmp_path/"B"
+    a.mkdir(); b.mkdir()
+    for i in range(20):
+        _write_image(str(a/("t%02d.png" % i))); _write_image(str(b/("t%02d.png" % i)))
+    names = lambda p: {f for f, _ in p}
+    s1 = names(matched_pairs(str(a), str(b), limit=5, offset=0, seed=0)[0])
+    s2 = names(matched_pairs(str(a), str(b), limit=5, offset=5, seed=0)[0])
+    assert not (s1 & s2)
+    s3 = names(matched_pairs(str(a), str(b), limit=5, offset=5, seed=99)[0])
+    assert s1 & s3          # a different seed re-permutes, so slices overlap
+
+
+def test_sample_mode_is_validated(tmp_path):
+    from topo_i2i.validate_fields import matched_pairs
+    a, b = tmp_path/"A", tmp_path/"B"
+    a.mkdir(); b.mkdir()
+    _write_image(str(a/"t.png")); _write_image(str(b/"t.png"))
+    with pytest.raises(ValueError, match="sample must be"):
+        matched_pairs(str(a), str(b), sample="nonsense")

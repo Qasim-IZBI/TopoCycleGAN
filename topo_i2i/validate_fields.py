@@ -42,8 +42,17 @@ def list_images(d):
     return sorted(f for f in os.listdir(d) if f.lower().endswith(IMAGE_EXTS))
 
 
-def matched_pairs(dir_a: str, dir_b: str, limit: int = 0, offset: int = 0):
-    """Pair tiles by filename stem; fall back to sorted order if names differ."""
+def matched_pairs(dir_a: str, dir_b: str, limit: int = 0, offset: int = 0,
+                  sample: str = "random", seed: int = 0):
+    """Pair tiles by filename stem; fall back to sorted order if names differ.
+
+    Tiles are named <source image>_r<row>c<col>, so sorted order groups every
+    crop of one slide together and `--limit N` would otherwise sample only the
+    first few slides. `sample="random"` permutes deterministically by `seed`
+    first, so a slice spans the whole directory -- and because the permutation
+    depends only on the seed, `offset` still carves out an exactly disjoint
+    second sample as long as the same seed is used.
+    """
     a, b = list_images(dir_a), list_images(dir_b)
     stem = lambda f: os.path.splitext(f)[0]
     common = sorted(set(map(stem, a)) & set(map(stem, b)))
@@ -57,6 +66,12 @@ def matched_pairs(dir_a: str, dir_b: str, limit: int = 0, offset: int = 0):
         pairs = list(zip(a[:n], b[:n]))
         how = ("WARNING: no filenames in common -- falling back to sorted order "
                "for %d tiles. Check that these directories really are registered." % n)
+    if sample == "random":
+        order = np.random.default_rng(seed).permutation(len(pairs))
+        pairs = [pairs[i] for i in order]
+        how += ", sampled at random (seed %d)" % seed
+    elif sample != "head":
+        raise ValueError("sample must be 'random' or 'head', got %r" % (sample,))
     if offset:
         pairs = pairs[offset:]
         how += ", skipping the first %d" % offset
@@ -129,7 +144,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--shuffles", type=int, default=5,
                    help="random permutations to average the shuffled baseline over")
     p.add_argument("--no-invert", action="store_true")
-    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--sample", choices=("random", "head"), default="random",
+                   help="'random' permutes the tile list by --seed before "
+                        "slicing, so a --limit sample spans every slide; 'head' "
+                        "takes them in filename order, which groups all crops of "
+                        "the first few slides")
+    p.add_argument("--seed", type=int, default=0,
+                   help="controls both the tile permutation and the shuffled "
+                        "baseline. Keep it FIXED between the screen and the "
+                        "held-out re-score, or --offset will not be disjoint")
     return p
 
 
@@ -139,7 +162,8 @@ def main() -> None:
     all_dims = tuple(sorted({d for ds in dim_sets for d in ds}))
     invert = not args.no_invert
 
-    pairs, how = matched_pairs(args.dataA, args.dataB, args.limit, args.offset)
+    pairs, how = matched_pairs(args.dataA, args.dataB, args.limit, args.offset,
+                               args.sample, args.seed)
     if not pairs:
         raise SystemExit("no tiles to compare")
     print(how)
@@ -198,8 +222,9 @@ def main() -> None:
         print("\nNOTE: %d combinations on %d tiles. At this sample size the leading "
               "rows are\n      statistically tied (95%% band is roughly +/-%.3f), so "
               "the top one is partly\n      luck. Re-score the leaders with "
-              "--offset %d on a disjoint slice."
-              % (len(rows), n, 1.96 * (0.5 / max(n, 1)) ** 0.5, args.offset + n))
+              "--offset %d --seed %d on a disjoint slice."
+              % (len(rows), n, 1.96 * (0.5 / max(n, 1)) ** 0.5,
+                 args.offset + n, args.seed))
     print("AUROC 0.5 means the distance says nothing about which tiles belong together;")
     print("a field pair that cannot separate true from random here will not teach")
     print("ph_trans anything during training.")
