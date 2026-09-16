@@ -45,6 +45,11 @@ SAMPLE=${SAMPLE:-random}       # tiles are named <slide>_r<row>c<col>, so 'head'
                                # would sample only the first few slides
 SEED=${SEED:-0}                # keep FIXED between screen and re-score, or
                                # OFFSET will not carve a disjoint slice
+WITHIN_SLIDE=${WITHIN_SLIDE:-0} # 1 = draw wrong partners from the SAME source
+                               # image. MIST pairs are serial sections, so a
+                               # true pair shares staining and scanner with its
+                               # partner; this separates tissue correspondence
+                               # from specimen recognition
 SHUFFLES=${SHUFFLES:-5}
 IMAGE_SIZE=${IMAGE_SIZE:-256}
 COMBINE=${COMBINE:-sum}        # merge rule for every 'a+b' spec in the run
@@ -90,6 +95,7 @@ for MARKER in $MARKERS; do
         --offset "$OFFSET" \
         --sample "$SAMPLE" \
         --seed "$SEED" \
+        $( [ "$WITHIN_SLIDE" = "1" ] && echo --shuffle-within-slide ) \
         | tee "$report"
 done
 

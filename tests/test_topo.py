@@ -874,3 +874,42 @@ def test_auroc_se_matches_a_bootstrap():
     predicted = auroc_se(float(np.mean(draws)), 128, 640)
     assert predicted == pytest.approx(empirical, abs=0.01)
     assert predicted < 0.5 * (0.5 / 128) ** 0.5      # far tighter than the naive bound
+
+
+# --- within-slide shuffling control --------------------------------------- #
+
+def test_slide_of_strips_the_crop_suffix():
+    from topo_i2i.validate_fields import slide_of
+    assert slide_of("t00_r0c0.png") == "t00"
+    assert slide_of("img_5_r10c3.tif") == "img_5"
+    assert slide_of("no_grid_suffix.png") == "no_grid_suffix"
+
+
+def test_within_slide_shuffle_is_a_same_slide_derangement():
+    import numpy as np
+    from topo_i2i.validate_fields import shuffled_partners, slide_of
+    pairs = [("%s_r%dc%d.png" % (s, r, c),) * 2
+             for s in ("A", "B", "C") for r in (0, 1) for c in (0, 1)]
+    perm, usable = shuffled_partners(pairs, np.random.default_rng(0), True)
+    assert usable == len(pairs)
+    for i, j in enumerate(perm):
+        assert i != j, "a tile kept its own partner"
+        assert slide_of(pairs[i][0]) == slide_of(pairs[j][0])
+
+
+def test_within_slide_shuffle_leaves_lone_tiles_alone():
+    """A slide with one tile has no alternative partner; it must not be mangled."""
+    import numpy as np
+    from topo_i2i.validate_fields import shuffled_partners
+    pairs = [("A_r0c0.png",)*2, ("A_r0c1.png",)*2, ("LONE_r0c0.png",)*2]
+    perm, usable = shuffled_partners(pairs, np.random.default_rng(0), True)
+    assert usable == 2
+    assert perm[2] == 2          # left in place, excluded from the comparison
+
+
+def test_unstratified_shuffle_is_still_a_derangement():
+    import numpy as np
+    from topo_i2i.validate_fields import shuffled_partners
+    pairs = [("t%02d.png" % i,)*2 for i in range(12)]
+    perm = shuffled_partners(pairs, np.random.default_rng(0), False)
+    assert all(perm[i] != i for i in range(len(pairs)))

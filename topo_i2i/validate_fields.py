@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import os
+import re
 
 import numpy as np
 import torch
@@ -78,6 +79,40 @@ def matched_pairs(dir_a: str, dir_b: str, limit: int = 0, offset: int = 0,
     if limit:
         pairs = pairs[:limit]
     return pairs, how
+
+
+def slide_of(name: str) -> str:
+    """Source image a crop came from: topo-crop names tiles <stem>_r<row>c<col>."""
+    return re.sub(r"_r\d+c\d+$", "", os.path.splitext(name)[0])
+
+
+def shuffled_partners(pairs, rng, within_slide: bool):
+    """A derangement of the B side.
+
+    within_slide=True draws each wrong partner from the SAME source image. That
+    controls for staining intensity, section thickness and scanner -- a true pair
+    shares all of those with its partner, so an unstratified shuffle lets the
+    distance score well by recognising the specimen rather than the tissue.
+    """
+    n = len(pairs)
+    perm = np.arange(n)
+    if not within_slide:
+        while True:
+            perm = rng.permutation(n)
+            if n < 2 or (perm != np.arange(n)).all():
+                return perm
+    groups = {}
+    for i, (a, _) in enumerate(pairs):
+        groups.setdefault(slide_of(a), []).append(i)
+    usable = 0
+    for idx in groups.values():
+        if len(idx) < 2:
+            continue                      # no alternative partner on this slide
+        usable += len(idx)
+        rolled = idx[1:] + idx[:1]        # a cyclic shift is always a derangement
+        for src, dst in zip(idx, rolled):
+            perm[src] = dst
+    return perm, usable
 
 
 def load(path: str, size: int) -> torch.Tensor:
@@ -155,6 +190,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="'auto' (lifetime for H0, birth for H1) is what training "
                         "uses -- keep it in the sweep or the winner cannot be "
                         "compared against your current setting")
+    p.add_argument("--shuffle-within-slide", action="store_true",
+                   help="draw each wrong partner from the same source image. "
+                        "Without this, a true pair also shares staining and "
+                        "scanner with its partner, so the distance can score "
+                        "well by recognising the specimen rather than the tissue")
     p.add_argument("--shuffles", type=int, default=5,
                    help="random permutations to average the shuffled baseline over")
     p.add_argument("--no-invert", action="store_true")
@@ -187,10 +227,16 @@ def main() -> None:
 
     rng = np.random.default_rng(args.seed)
     perms = []
-    while len(perms) < args.shuffles:
-        p = rng.permutation(n)
-        if n < 2 or (p != np.arange(n)).all():     # a derangement: no true pair survives
-            perms.append(p)
+    for _ in range(args.shuffles):
+        out = shuffled_partners(pairs, rng, args.shuffle_within_slide)
+        if args.shuffle_within_slide:
+            perm, usable = out
+            perms.append(perm)
+        else:
+            perms.append(out)
+    if args.shuffle_within_slide:
+        print("shuffling within source image: %d of %d tiles have an alternative "
+              "partner on the same image" % (usable, n))
 
     # diagrams are the expensive part -- compute each (spec, downsample) once
     cache = {}

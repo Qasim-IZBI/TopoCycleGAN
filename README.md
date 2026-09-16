@@ -219,7 +219,21 @@ cycle and distribution term.
 ## Choosing the fields before training
 
 MIST ships registered H&E/IHC pairs, so the topological distance has a ground
-truth to be tested against: a **true** pair must score below a **random** one. If
+truth to be tested against: a **true** pair must score below a **random** one.
+
+**MIST pairs are serial sections**, which caps what this can show. Sections are
+3-5 um apart and a nucleus is 5-10 um, so the two slides contain genuinely
+different nuclei — exact nuclear correspondence is absent from the ground truth
+itself. Only coarser architecture (glands, stroma, regional cellularity) carries
+across. Measured AUROCs of ~0.6 on MIST may therefore be near the ceiling rather
+than evidence the loss is broken, and the useful output is the *relative* ranking
+of settings, which all face the same ceiling.
+
+`--shuffle-within-slide` draws each wrong partner from the same source image.
+Without it, a true pair also shares staining intensity, section thickness and
+scanner with its partner, so the distance can score well by recognising the
+specimen rather than the tissue — an unstratified AUROC is an upper bound on the
+tissue-correspondence signal. If
 it does not, that field choice carries no information about correspondence and
 cannot teach `ph_trans` anything, however `lambda_topo` is set.
 
