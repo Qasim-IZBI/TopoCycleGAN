@@ -71,6 +71,13 @@ class TopoConfig:
     field_B: str = "dab+hematoxylin"    # IHC domain -> chromogen + counterstain
     combine: str = "max"                # how 'a+b' fields merge: max/sum/mean
 
+    # Estimated stain vectors, per domain, as {name: [r, g, b]}. Empty means use
+    # the literature table in fields.STAIN_VECTORS. Stored here rather than read
+    # from a file at build time so they travel in the checkpoint and inference
+    # rebuilds exactly the field that was trained on.
+    vectors_A: dict = dc_field(default_factory=dict)
+    vectors_B: dict = dc_field(default_factory=dict)
+
     # 0 = connected components, 1 = loops. TopoGAN focuses on 1; for nuclei,
     # 0 usually carries more signal. Both to start.
     dims: Tuple[int, ...] = (0, 1)
@@ -124,14 +131,16 @@ class TopoLossMixin:
         # A buffer, not a plain int, so it is saved in the checkpoint: a requeued
         # job must not restart the warmup from zero.
         self.register_buffer("_topo_step", torch.zeros((), dtype=torch.long))
+        va = cfg.vectors_A or None
+        vb = cfg.vectors_B or None
         self._field_mods = {
-            "A": make_field(cfg.field_A, cfg.combine),
-            "B": make_field(cfg.field_B, cfg.combine),
+            "A": make_field(cfg.field_A, cfg.combine, vectors=va),
+            "B": make_field(cfg.field_B, cfg.combine, vectors=vb),
         }
         if cfg.ph_cyc_split:
             first, second = split_specs(cfg.field_B)
-            self._field_mods["B1"] = make_field(first)
-            self._field_mods["B2"] = make_field(second)
+            self._field_mods["B1"] = make_field(first, vectors=vb)
+            self._field_mods["B2"] = make_field(second, vectors=vb)
 
     def _to_field(self, rgb: torch.Tensor, domain: str) -> torch.Tensor:
         """RGB -> the stain channel this domain's topology is computed on."""

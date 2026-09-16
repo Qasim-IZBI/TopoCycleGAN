@@ -1,81 +1,51 @@
-# The sweep grid: the single source of truth for which cells exist.
+# The training grid for the paper: the single source of truth for the cells.
 #
-# Sourced by _sweep_common.sh (training) and infer_sweep.sh (validation), so the
+# Sourced by _sweep_common.sh (training) and infer_sweep.sh (inference), so the
 # two always agree on what task N means. Not executable on its own.
 #
-#   lambda_cycle  {10, 0}          CycleGAN L1 cycle weight
-#   ph_cyc        {0, 1}           cycle-topology weight
-#   ph_trans      {0, 1}           translation-topology weight
-#   lambda_topo   {2e-4, 2e-2}     overall PH scale
-#   field_B       hematoxylin/dab | dab/hematoxylin | dab+hematoxylin (sum)
+#   lambda_cycle  fixed at 10 (the zoo's CycleGAN default)
+#   lambda_topo   {2e-4, 2e-2, 2e-1}
+#   ph_cyc        {0, 1}
+#   ph_trans      {0, 1}
 #
-# field_A is fixed at hematoxylin/eosin. The '/' forms deconvolve; a bare stain
-# name projects and does NOT separate stains -- see fields.StainField.
+# The full factorial is 12, but ph_cyc=0 AND ph_trans=0 switches off every
+# topological term, so lambda_topo is inert there -- those 3 collapse to a single
+# cell, which IS the vanilla CycleGAN baseline. 10 cells remain.
 #
-# The full factorial is 48, but ph_cyc=0 AND ph_trans=0 switches off every
-# topological term, making lambda_topo and both fields inert -- those 12 collapse
-# to one anchor run per lambda_cycle. The 38 that remain are listed here.
+# Task 0 is that baseline. It runs the same code path as every other cell --
+# same data, schedule, capacity and optimiser, only the loss differs -- so it is
+# a fair comparison rather than a re-implementation.
 #
-#   tasks  0-18  lambda_cycle=10  (the critical path)
-#   tasks 19-37  lambda_cycle=0   (does topology substitute for L1 cycle?)
+# The field hyperparameters are NOT swept: they were fixed beforehand by
+# topo-validate-fields on held-out validation tiles (field_A stain1/stain2,
+# field_B stain1+stain2 summed, downsample 2, dims 0 1, projection birth).
 #
-# Format: lambda_cycle:ph_cyc:ph_trans:lambda_topo:field_B:field_combine
+# Format: lambda_topo:ph_cyc:ph_trans
 
 CELLS=(
-  "10:0:0:0:hematoxylin/dab:max"   # anchor: no PH, fields inert
-  "10:0:1:0.0002:hematoxylin/dab:max"
-  "10:0:1:0.0002:dab/hematoxylin:max"
-  "10:0:1:0.0002:dab+hematoxylin:sum"
-  "10:0:1:0.02:hematoxylin/dab:max"
-  "10:0:1:0.02:dab/hematoxylin:max"
-  "10:0:1:0.02:dab+hematoxylin:sum"
-  "10:1:0:0.0002:hematoxylin/dab:max"
-  "10:1:0:0.0002:dab/hematoxylin:max"
-  "10:1:0:0.0002:dab+hematoxylin:sum"
-  "10:1:0:0.02:hematoxylin/dab:max"
-  "10:1:0:0.02:dab/hematoxylin:max"
-  "10:1:0:0.02:dab+hematoxylin:sum"
-  "10:1:1:0.0002:hematoxylin/dab:max"
-  "10:1:1:0.0002:dab/hematoxylin:max"
-  "10:1:1:0.0002:dab+hematoxylin:sum"
-  "10:1:1:0.02:hematoxylin/dab:max"
-  "10:1:1:0.02:dab/hematoxylin:max"
-  "10:1:1:0.02:dab+hematoxylin:sum"
-  "0:0:0:0:hematoxylin/dab:max"    # anchor: no PH, fields inert
-  "0:0:1:0.0002:hematoxylin/dab:max"
-  "0:0:1:0.0002:dab/hematoxylin:max"
-  "0:0:1:0.0002:dab+hematoxylin:sum"
-  "0:0:1:0.02:hematoxylin/dab:max"
-  "0:0:1:0.02:dab/hematoxylin:max"
-  "0:0:1:0.02:dab+hematoxylin:sum"
-  "0:1:0:0.0002:hematoxylin/dab:max"
-  "0:1:0:0.0002:dab/hematoxylin:max"
-  "0:1:0:0.0002:dab+hematoxylin:sum"
-  "0:1:0:0.02:hematoxylin/dab:max"
-  "0:1:0:0.02:dab/hematoxylin:max"
-  "0:1:0:0.02:dab+hematoxylin:sum"
-  "0:1:1:0.0002:hematoxylin/dab:max"
-  "0:1:1:0.0002:dab/hematoxylin:max"
-  "0:1:1:0.0002:dab+hematoxylin:sum"
-  "0:1:1:0.02:hematoxylin/dab:max"
-  "0:1:1:0.02:dab/hematoxylin:max"
-  "0:1:1:0.02:dab+hematoxylin:sum"
+  "0:0:0"
+  "0.0002:0:1"
+  "0.0002:1:0"
+  "0.0002:1:1"
+  "0.02:0:1"
+  "0.02:1:0"
+  "0.02:1:1"
+  "0.2:0:1"
+  "0.2:1:0"
+  "0.2:1:1"
 )
 
-# Resolve one cell into the variables both scripts use, RUN_NAME included.
-# Environment overrides still win, so --export=ALL,LAMBDA_TOPO=0 works as before.
 grid_select() {
     local id=$1
     if ! (( id < ${#CELLS[@]} )); then
         echo "task ${id} is past the end of the ${#CELLS[@]}-cell grid" >&2
         return 1
     fi
-    IFS=: read -r LAMBDA_CYCLE PH_CYC PH_TRANS CELL_TOPO CELL_FIELD_B CELL_COMBINE \
-        <<< "${CELLS[$id]}"
+    IFS=: read -r CELL_TOPO PH_CYC PH_TRANS <<< "${CELLS[$id]}"
+    LAMBDA_CYCLE=${LAMBDA_CYCLE:-10}
     LAMBDA_TOPO=${LAMBDA_TOPO:-$CELL_TOPO}
-    FIELD_A=${FIELD_A:-hematoxylin/eosin}
-    FIELD_B=${FIELD_B:-$CELL_FIELD_B}
-    FIELD_COMBINE=${FIELD_COMBINE:-$CELL_COMBINE}
-    FIELD_B_TAG=${FIELD_B//\//-}          # '/' is not safe in a directory name
-    RUN_NAME="${MARKER}_lc${LAMBDA_CYCLE}_lt${LAMBDA_TOPO}_cyc${PH_CYC}_trans${PH_TRANS}_${FIELD_B_TAG}"
+    RUN_NAME="${MARKER}_lt${LAMBDA_TOPO}_cyc${PH_CYC}_trans${PH_TRANS}"
+    if [ "$PH_CYC" = "0" ] && [ "$PH_TRANS" = "0" ]; then
+        RUN_NAME="${MARKER}_baseline_cyclegan"
+    fi
 }

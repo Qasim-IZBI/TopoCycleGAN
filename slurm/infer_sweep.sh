@@ -9,7 +9,7 @@
 #SBATCH --partition=clara
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
-#SBATCH --array=0-37  # same grid as the training sweep; see slurm/_grid.sh
+#SBATCH --array=0-9   # 10 cells; see slurm/_grid.sh for the grid
 
 # Validation inference, one array task per sweep cell -- task N infers the model
 # that training task N produced, because both resolve the cell through

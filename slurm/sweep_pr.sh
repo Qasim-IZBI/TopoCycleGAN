@@ -9,15 +9,17 @@
 #SBATCH --partition=clara
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
-#SBATCH --array=0-37  # 38 cells; see slurm/_sweep_common.sh for the grid
+#SBATCH --array=0-9   # 10 cells; see slurm/_grid.sh for the grid
 
 # MIST PR: H&E -> PR IHC.
 #
 # Run once before the first submit:  mkdir -p logs_topo
 #
-#   sbatch slurm/sweep_pr.sh              # all 38
-#   sbatch --array=0-18 slurm/sweep_pr.sh # lambda_cycle=10 only (critical path)
-#   sbatch --array=13 slurm/sweep_pr.sh   # one cell
+#   sbatch slurm/sweep_pr.sh            # all 10 cells
+#   sbatch --array=0 slurm/sweep_pr.sh  # the vanilla CycleGAN baseline only
+#
+# Needs stain vectors: run slurm/estimate_stains.sh first, or use
+# slurm/run_pipeline.sh which chains the two with a dependency.
 #
 # Submit from the repository root so SLURM_SUBMIT_DIR points at it, or export
 # REPO=/path/to/TopoCycleGAN.

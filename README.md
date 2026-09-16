@@ -1,3 +1,42 @@
+## Training pipeline
+
+```bash
+bash slurm/run_pipeline.sh                    # estimate vectors, then train all four markers
+MARKERS="ER Ki67" bash slurm/run_pipeline.sh  # a subset
+SKIP_ESTIMATE=1 bash slurm/run_pipeline.sh    # vectors already estimated
+```
+
+`run_pipeline.sh` is a submitter, not a job: it submits `estimate_stains.sh`,
+then each marker's training array with `--dependency=afterok` on it, so
+everything queues at once but training only starts when the vectors exist. If
+every marker already has a `stains_<marker>.json` it skips estimation
+automatically.
+
+The grid per marker is 10 cells — `lambda_topo` {2e-4, 2e-2, 2e-1} x `ph_cyc`
+{0,1} x `ph_trans` {0,1}, with `lambda_cycle` fixed at 10. The full factorial is
+12, but `ph_cyc=0` and `ph_trans=0` switches off every topological term, so those
+three collapse into one cell:
+
+```
+task 0  ER_baseline_cyclegan        <- vanilla CycleGAN
+task 1  ER_lt0.0002_cyc0_trans1
+...
+task 9  ER_lt0.2_cyc1_trans1
+```
+
+**Task 0 is the baseline and runs the identical code path** — same data,
+schedule, capacity and optimiser, only the loss differs — so it is a fair
+comparison rather than a re-implementation.
+
+The field hyperparameters are **not** swept. They were fixed beforehand by
+`topo-validate-fields` on held-out validation tiles: `field_A stain1/stain2`,
+`field_B stain1+stain2` summed, `--topo-downsample 2`, `--topo-dims 0 1`,
+`--topo-projection birth`. Training refuses to start if the stain vectors are
+missing rather than silently falling back to the literature table.
+
+Estimated vectors are stored in the checkpoint, so `topo-infer` rebuilds exactly
+the field that was trained on.
+
 # topo-i2i
 
 TopoGAN's topological loss ([Wang et al., ECCV 2020](https://www.ecva.net/papers/eccv_2020/papers_ECCV/papers/123480120.pdf))

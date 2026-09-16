@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
@@ -21,6 +22,7 @@ from i2i_stain_zoo.datasets.unpaired_dataset import UnpairedDataset
 from i2i_stain_zoo.trainer.base_trainer import BaseTrainer
 
 from topo_i2i.fields import FIELD_PRESETS, STAIN_VECTORS, resolve_fields
+from topo_i2i.stains import load_vectors
 from topo_i2i.models import TopoConfig, TopoCycleGAN, TopoCycleGANConfig
 
 
@@ -52,6 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="weight on the cycle-topology terms (L_PH-cyc,H + L_PH-cyc,I)")
     g.add_argument("--lambda-ph-trans", type=float, default=1.0,
                    help="weight on the translation terms (L_PH-trans,H + L_PH-trans,I)")
+    g.add_argument("--stains", default=None, metavar="JSON",
+                   help="estimated stain vectors from topo-estimate-stains. With "
+                        "this, give field specs built from 'stain1'/'stain2'; the "
+                        "vectors are stored in the checkpoint so inference "
+                        "rebuilds the same field")
     g.add_argument("--preset", default="he-ihc", choices=sorted(FIELD_PRESETS),
                    help="which stain channels each domain is deconvolved onto: "
                         + "; ".join("%s -> %s / %s" % (k, v["field_A"], v["field_B"])
@@ -107,6 +114,16 @@ def main() -> None:
     print("[fields] preset=%s  A=%s  B=%s  combine=%s"
           % (args.preset, fields["field_A"], fields["field_B"], fields["combine"]))
 
+    vectors_A, vectors_B = {}, {}
+    if args.stains:
+        vecs, raw = load_vectors(args.stains)
+        vectors_A = {k: list(v) for k, v in vecs["A"].items()}
+        vectors_B = {k: list(v) for k, v in vecs["B"].items()}
+        print("[stains] %s" % args.stains)
+        for dom, v in (("A", vectors_A), ("B", vectors_B)):
+            print("  %s stain1 %s  stain2 %s" % (dom, np.round(v["stain1"], 4),
+                                                 np.round(v["stain2"], 4)))
+
     cfg = TopoCycleGANConfig(
         lambda_cycle=args.lambda_cycle,
         lambda_identity=args.lambda_identity,
@@ -126,6 +143,8 @@ def main() -> None:
         max_images=args.topo_max_images,
         downsample=args.topo_downsample,
         invert=not args.no_topo_invert,
+        vectors_A=vectors_A,
+        vectors_B=vectors_B,
         ))
     model = TopoCycleGAN(cfg).to(device)
 

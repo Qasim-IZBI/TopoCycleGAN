@@ -56,7 +56,17 @@ STEPS=${STEPS:-400000}              # 8 epochs of ~50k tiles; fits one 48h slot
 BATCH_SIZE=${BATCH_SIZE:-1}
 SAVE_STEPS=${SAVE_STEPS:-100000}    # permanent checkpoints at 100k/200k/300k/400k
 IMAGE_SIZE=${IMAGE_SIZE:-256}
-TOPO_DOWNSAMPLE=${TOPO_DOWNSAMPLE:-1}
+# Fixed beforehand by topo-validate-fields on held-out validation tiles -- not
+# swept here, and reported as such in the paper. The specs are positional
+# because the vectors come from data: stain1/stain2 is the deconvolved first
+# stain of the H&E domain, stain1+stain2 the summed pair of the IHC domain.
+FIELD_A=${FIELD_A:-stain1/stain2}
+FIELD_B=${FIELD_B:-stain1+stain2}
+FIELD_COMBINE=${FIELD_COMBINE:-sum}
+TOPO_DOWNSAMPLE=${TOPO_DOWNSAMPLE:-2}
+TOPO_DIMS=${TOPO_DIMS:-"0 1"}
+TOPO_PROJECTION=${TOPO_PROJECTION:-birth}
+STAINS=${STAINS:-${STAINS_DIR:-/work2/bz66izin-TopoCG/field_validation_estimated}/stains_${MARKER}.json}
 TOPO_EVERY=${TOPO_EVERY:-2}
 PH_CYC_SPLIT=${PH_CYC_SPLIT:-0}     # 1 = compare the IHC cycle term per stain
                                     # channel; ~+50% persistence cost, so a cell
@@ -68,7 +78,13 @@ TOPO_WARMUP=${TOPO_WARMUP:-50000}   # then ramp the PH weight in over 50k steps,
 
 echo "MARKER=${MARKER}"
 echo "TASK_ID=${TASK_ID}"
-echo "LAMBDA_CYCLE=${LAMBDA_CYCLE}  FIELD_A=${FIELD_A}  FIELD_B=${FIELD_B} (${FIELD_COMBINE})  PH_CYC_SPLIT=${PH_CYC_SPLIT}"
+echo "LAMBDA_CYCLE=${LAMBDA_CYCLE}  FIELD_A=${FIELD_A}  FIELD_B=${FIELD_B} (${FIELD_COMBINE})"
+echo "TOPO_DOWNSAMPLE=${TOPO_DOWNSAMPLE}  TOPO_DIMS=${TOPO_DIMS}  TOPO_PROJECTION=${TOPO_PROJECTION}"
+if [ -n "$STAINS" ] && [ ! -f "$STAINS" ]; then
+    echo "ERROR: stain vectors not found at ${STAINS}" >&2
+    echo "Run slurm/estimate_stains.sh first, or set STAINS= to use the literature table" >&2
+    exit 1
+fi
 echo "LAMBDA_PH_CYC=${PH_CYC}  LAMBDA_PH_TRANS=${PH_TRANS}  LAMBDA_TOPO=${LAMBDA_TOPO}"
 
 # -----------------------------
@@ -118,6 +134,9 @@ run_cmd topo-train \
     --lambda-ph-cyc "${PH_CYC}" \
     --lambda-ph-trans "${PH_TRANS}" \
     --topo-downsample "${TOPO_DOWNSAMPLE}" \
+    --topo-dims ${TOPO_DIMS} \
+    --topo-projection "${TOPO_PROJECTION}" \
+    ${STAINS:+--stains "$STAINS"} \
     --topo-every "${TOPO_EVERY}" \
     --topo-start-step "${TOPO_START}" \
     --topo-warmup-steps "${TOPO_WARMUP}" \
