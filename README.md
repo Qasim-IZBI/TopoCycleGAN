@@ -252,6 +252,18 @@ instead. Raw distances are *not* comparable across factors (the sum runs over
 more diagram points at finer resolution), but AUROC is, which is why it is the
 column to steer by.
 
+**How many tiles.** Use ~128 for the screen: the 95% AUROC band is about
++/-0.013 there, enough to rank field choices, and the full 324-combination grid
+takes ~3 minutes. 32 tiles gives +/-0.027, too noisy once 324 combinations get to
+compete for the maximum. The whole 4000-tile val set buys +/-0.003 and costs
+~1.6 h per marker, which cannot change which field you pick. Distances, not
+diagrams, dominate that cost.
+
+Then re-score only the leading rows with `--offset 128` on a disjoint slice. At
+128 tiles the top ten rows are statistically tied, so the screen's job is to
+eliminate everything near 0.5 and surface a cluster of good cheap settings, not
+to crown a winner.
+
 It scores the cross product of everything given — a 3x3x3x3x3 sweep is 324
 combinations and runs in seconds on 24 tiles — rather than committing GPU-weeks
 to find out. With that many combinations the top row is partly luck, so the tool

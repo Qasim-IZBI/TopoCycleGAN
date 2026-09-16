@@ -3,7 +3,7 @@
 #SBATCH --output=logs_topo/valfields_%j.out
 #SBATCH --error=logs_topo/valfields_%j.err
 
-#SBATCH --time=01:00:00
+#SBATCH --time=04:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=16G
 #SBATCH --partition=clara
@@ -36,7 +36,11 @@ MARKERS=${MARKERS:-"Ki67 ER HER2 PR"}
 TILES=${TILES:-/work2/bz66izin-TopoCG/MIST_tiles}
 OUT=${OUT:-/work2/bz66izin-TopoCG/field_validation}
 
-LIMIT=${LIMIT:-128}            # tiles per marker; more = less selection noise
+LIMIT=${LIMIT:-128}            # 128 gives a 95% AUROC band of about +/-0.013,
+                               # enough to rank field choices; 4000 would buy
+                               # +/-0.003 and cost 1.6 h per marker
+OFFSET=${OFFSET:-0}            # skip this many tiles: use it to re-score the
+                               # leaders on a slice the screen never saw
 SHUFFLES=${SHUFFLES:-5}
 IMAGE_SIZE=${IMAGE_SIZE:-256}
 COMBINE=${COMBINE:-sum}        # merge rule for every 'a+b' spec in the run
@@ -79,11 +83,13 @@ for MARKER in $MARKERS; do
         --image-size "$IMAGE_SIZE" \
         --limit "$LIMIT" \
         --shuffles "$SHUFFLES" \
+        --offset "$OFFSET" \
         | tee "$report"
 done
 
 echo
 echo "reports written under ${OUT}/"
-echo "Re-score the leading rows with a different --seed and a disjoint --limit"
-echo "range before trusting the ranking: many combinations on few tiles will"
-echo "produce a strong-looking winner by chance."
+echo "Two-stage use: screen the whole grid here, then re-score just the leading"
+echo "rows on a disjoint slice, e.g."
+echo "  OFFSET=${LIMIT} LIMIT=512 FIELDS_A=<winner> FIELDS_B=<winner> \\"
+echo "    DOWNSAMPLE=<n> PROJECTIONS=<p> DIMS_SETS=<d> bash slurm/validate_fields.sh"

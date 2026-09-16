@@ -42,7 +42,7 @@ def list_images(d):
     return sorted(f for f in os.listdir(d) if f.lower().endswith(IMAGE_EXTS))
 
 
-def matched_pairs(dir_a: str, dir_b: str, limit: int = 0):
+def matched_pairs(dir_a: str, dir_b: str, limit: int = 0, offset: int = 0):
     """Pair tiles by filename stem; fall back to sorted order if names differ."""
     a, b = list_images(dir_a), list_images(dir_b)
     stem = lambda f: os.path.splitext(f)[0]
@@ -57,6 +57,9 @@ def matched_pairs(dir_a: str, dir_b: str, limit: int = 0):
         pairs = list(zip(a[:n], b[:n]))
         how = ("WARNING: no filenames in common -- falling back to sorted order "
                "for %d tiles. Check that these directories really are registered." % n)
+    if offset:
+        pairs = pairs[offset:]
+        how += ", skipping the first %d" % offset
     if limit:
         pairs = pairs[:limit]
     return pairs, how
@@ -100,7 +103,12 @@ def build_parser() -> argparse.ArgumentParser:
                    metavar="SPEC", help="one or more domain-B specs to score")
     p.add_argument("--field-combine", default="sum", choices=("max", "sum", "mean"),
                    help="merge rule for any 'a+b' spec")
-    p.add_argument("--limit", type=int, default=64, help="tiles to use (0 = all)")
+    p.add_argument("--limit", type=int, default=128, help="tiles to use (0 = all)")
+    p.add_argument("--offset", type=int, default=0, metavar="N",
+                   help="skip the first N tiles. Screen the whole grid on the "
+                        "first slice, then re-score the leaders with an --offset "
+                        "past it -- a held-out sample is what protects the "
+                        "ranking from selection noise")
     p.add_argument("--image-size", type=int, default=256)
     p.add_argument("--downsample", type=int, nargs="+", default=[1], metavar="N",
                    help="one or more pooling factors to score. Persistence cost "
@@ -131,7 +139,7 @@ def main() -> None:
     all_dims = tuple(sorted({d for ds in dim_sets for d in ds}))
     invert = not args.no_invert
 
-    pairs, how = matched_pairs(args.dataA, args.dataB, args.limit)
+    pairs, how = matched_pairs(args.dataA, args.dataB, args.limit, args.offset)
     if not pairs:
         raise SystemExit("no tiles to compare")
     print(how)
@@ -187,9 +195,11 @@ def main() -> None:
         print("cheapest within 0.01 AUROC: %s / %s ds=%d dims=%s proj=%s (AUROC %.3f)"
               % (cheapest[0], cheapest[1], cheapest[2], cheapest[3], cheapest[4], cheapest[8]))
     if len(rows) > 10:
-        print("\nNOTE: %d combinations were scored on %d tiles. The top row is partly "
-              "luck;\n      re-run the leaders on a held-out set of tiles before "
-              "trusting the ranking." % (len(rows), n))
+        print("\nNOTE: %d combinations on %d tiles. At this sample size the leading "
+              "rows are\n      statistically tied (95%% band is roughly +/-%.3f), so "
+              "the top one is partly\n      luck. Re-score the leaders with "
+              "--offset %d on a disjoint slice."
+              % (len(rows), n, 1.96 * (0.5 / max(n, 1)) ** 0.5, args.offset + n))
     print("AUROC 0.5 means the distance says nothing about which tiles belong together;")
     print("a field pair that cannot separate true from random here will not teach")
     print("ph_trans anything during training.")

@@ -809,3 +809,16 @@ def test_validate_fields_sweeps_dims_and_projection():
     assert ns.topo_projection == ["auto", "birth"]
     d = build_parser().parse_args("--dataA a --dataB b".split())
     assert d.dims_set == ["0,1"] and d.topo_projection == ["auto"]
+
+
+def test_matched_pairs_offset_gives_a_disjoint_slice(tmp_path):
+    from topo_i2i.validate_fields import matched_pairs
+    a, b = tmp_path/"A", tmp_path/"B"
+    a.mkdir(); b.mkdir()
+    for i in range(10):
+        _write_image(str(a/("t%02d.png" % i))); _write_image(str(b/("t%02d.png" % i)))
+    first, _ = matched_pairs(str(a), str(b), limit=4)
+    second, how = matched_pairs(str(a), str(b), limit=4, offset=4)
+    assert len(first) == len(second) == 4
+    assert not (set(f for f, _ in first) & set(f for f, _ in second))
+    assert "skipping the first 4" in how
