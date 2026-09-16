@@ -266,7 +266,12 @@ instead. Raw distances are *not* comparable across factors (the sum runs over
 more diagram points at finer resolution), but AUROC is, which is why it is the
 column to steer by.
 
-**How many tiles.** Use ~128 for the screen: the 95% AUROC band is about
+**How many tiles.** The 95% band at AUROC 0.60 is +/-0.069 at 128 tiles,
++/-0.035 at 512 and +/-0.012 at 4000. Note crops from one source image are not
+independent samples — at four crops per image, 512 tiles is ~128 images — so the
+effective sample is nearer the image count than the tile count.
+
+Use ~128 for the screen: the 95% AUROC band is about
 +/-0.013 there, enough to rank field choices, and the full 324-combination grid
 takes ~3 minutes. 32 tiles gives +/-0.027, too noisy once 324 combinations get to
 compete for the maximum. The whole 4000-tile val set buys +/-0.003 and costs

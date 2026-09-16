@@ -109,7 +109,10 @@ def shuffled_partners(pairs, rng, within_slide: bool):
         if len(idx) < 2:
             continue                      # no alternative partner on this slide
         usable += len(idx)
-        rolled = idx[1:] + idx[:1]        # a cyclic shift is always a derangement
+        # Rotate by a random non-zero amount: always a derangement, and unlike a
+        # fixed shift it actually differs between --shuffles repetitions.
+        k = int(rng.integers(1, len(idx)))
+        rolled = idx[k:] + idx[:k]
         for src, dst in zip(idx, rolled):
             perm[src] = dst
     return perm, usable
@@ -279,7 +282,9 @@ def main() -> None:
         print("cheapest within 0.01 AUROC: %s / %s ds=%d dims=%s proj=%s (AUROC %.3f)"
               % (cheapest[0], cheapest[1], cheapest[2], cheapest[3], cheapest[4], cheapest[8]))
     if len(rows) > 10:
-        se = auroc_se(best[8], n, n * args.shuffles)
+        # Shuffled comparisons reuse the same B tiles, so they are not
+        # n * shuffles independent samples; n is the honest denominator.
+        se = auroc_se(best[8], n, n)
         print("\nNOTE: %d combinations on %d tiles. The 95%% band on the best AUROC is "
               "+/-%.3f,\n      and taking the maximum over many correlated "
               "combinations inflates it further,\n      so treat the top row as an "

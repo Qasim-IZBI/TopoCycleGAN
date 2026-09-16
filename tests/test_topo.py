@@ -913,3 +913,15 @@ def test_unstratified_shuffle_is_still_a_derangement():
     pairs = [("t%02d.png" % i,)*2 for i in range(12)]
     perm = shuffled_partners(pairs, np.random.default_rng(0), False)
     assert all(perm[i] != i for i in range(len(pairs)))
+
+
+def test_within_slide_shuffles_differ_between_calls():
+    """A fixed rotation would give identical permutations, inflating the sample."""
+    import numpy as np
+    from topo_i2i.validate_fields import shuffled_partners
+    pairs = [("%s_r%dc%d.png" % (s, r, c),)*2
+             for s in ("A", "B", "C", "D") for r in (0, 1) for c in (0, 1)]
+    rng = np.random.default_rng(0)
+    perms = {tuple(int(x) for x in shuffled_partners(pairs, rng, True)[0])
+             for _ in range(10)}
+    assert len(perms) > 1
