@@ -891,7 +891,7 @@ def test_within_slide_shuffle_is_a_same_slide_derangement():
     pairs = [("%s_r%dc%d.png" % (s, r, c),) * 2
              for s in ("A", "B", "C") for r in (0, 1) for c in (0, 1)]
     perm, usable = shuffled_partners(pairs, np.random.default_rng(0), True)
-    assert usable == len(pairs)
+    assert len(usable) == len(pairs)
     for i, j in enumerate(perm):
         assert i != j, "a tile kept its own partner"
         assert slide_of(pairs[i][0]) == slide_of(pairs[j][0])
@@ -903,8 +903,8 @@ def test_within_slide_shuffle_leaves_lone_tiles_alone():
     from topo_i2i.validate_fields import shuffled_partners
     pairs = [("A_r0c0.png",)*2, ("A_r0c1.png",)*2, ("LONE_r0c0.png",)*2]
     perm, usable = shuffled_partners(pairs, np.random.default_rng(0), True)
-    assert usable == 2
-    assert perm[2] == 2          # left in place, excluded from the comparison
+    assert usable == [0, 1]
+    assert perm[2] == 2          # left in place, and excluded from the comparison
 
 
 def test_unstratified_shuffle_is_still_a_derangement():
