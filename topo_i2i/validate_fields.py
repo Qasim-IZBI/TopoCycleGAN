@@ -81,12 +81,24 @@ def matched_pairs(dir_a: str, dir_b: str, limit: int = 0, offset: int = 0,
     return pairs, how
 
 
-def slide_of(name: str) -> str:
-    """Source image a crop came from: topo-crop names tiles <stem>_r<row>c<col>."""
-    return re.sub(r"_r\d+c\d+$", "", os.path.splitext(name)[0])
+DEFAULT_SLIDE_REGEX = r"_r\d+c\d+$"
 
 
-def shuffled_partners(pairs, rng, within_slide: bool):
+def slide_of(name: str, pattern: str = DEFAULT_SLIDE_REGEX) -> str:
+    """Group a crop belongs to. `pattern` is stripped from the filename stem.
+
+    The default strips topo-crop's `_r<row>c<col>`, so a group is one SOURCE
+    TILE -- and its members are the directly adjacent quadrants of that tile.
+    That makes the within-slide control a hard test: it asks the distance to
+    tell a tile from the tissue right next to it. A coarser pattern (grouping by
+    slide or case, if the filenames encode it) gives a weaker, often fairer
+    control.
+    """
+    return re.sub(pattern, "", os.path.splitext(name)[0])
+
+
+def shuffled_partners(pairs, rng, within_slide: bool,
+                      pattern: str = DEFAULT_SLIDE_REGEX):
     """A derangement of the B side.
 
     within_slide=True draws each wrong partner from the SAME source image. That
@@ -103,19 +115,22 @@ def shuffled_partners(pairs, rng, within_slide: bool):
                 return perm
     groups = {}
     for i, (a, _) in enumerate(pairs):
-        groups.setdefault(slide_of(a), []).append(i)
-    usable = 0
+        groups.setdefault(slide_of(a, pattern), []).append(i)
+    usable = []
     for idx in groups.values():
         if len(idx) < 2:
             continue                      # no alternative partner on this slide
-        usable += len(idx)
+        usable.extend(idx)
         # Rotate by a random non-zero amount: always a derangement, and unlike a
         # fixed shift it actually differs between --shuffles repetitions.
         k = int(rng.integers(1, len(idx)))
         rolled = idx[k:] + idx[:k]
         for src, dst in zip(idx, rolled):
             perm[src] = dst
-    return perm, usable
+    # Tiles with no alternative keep perm[i] = i. They MUST be excluded from the
+    # comparison: scoring them would put true-pair distances into the shuffled
+    # set and drag the AUROC toward 0.5.
+    return perm, sorted(usable)
 
 
 def load(path: str, size: int) -> torch.Tensor:
@@ -198,6 +213,12 @@ def build_parser() -> argparse.ArgumentParser:
                         "Without this, a true pair also shares staining and "
                         "scanner with its partner, so the distance can score "
                         "well by recognising the specimen rather than the tissue")
+    p.add_argument("--slide-regex", default=DEFAULT_SLIDE_REGEX, metavar="RE",
+                   help="with --shuffle-within-slide, the pattern stripped from a "
+                        "filename to get its group. The default strips "
+                        "topo-crop's _r<row>c<col>, so groups are single source "
+                        "tiles and partners are ADJACENT tissue -- a deliberately "
+                        "hard control. Use a coarser pattern to group by slide")
     p.add_argument("--shuffles", type=int, default=5,
                    help="random permutations to average the shuffled baseline over")
     p.add_argument("--no-invert", action="store_true")
@@ -230,16 +251,22 @@ def main() -> None:
 
     rng = np.random.default_rng(args.seed)
     perms = []
+    index = list(range(n))
     for _ in range(args.shuffles):
-        out = shuffled_partners(pairs, rng, args.shuffle_within_slide)
+        out = shuffled_partners(pairs, rng, args.shuffle_within_slide,
+                                args.slide_regex)
         if args.shuffle_within_slide:
             perm, usable = out
             perms.append(perm)
+            index = usable
         else:
             perms.append(out)
     if args.shuffle_within_slide:
         print("shuffling within source image: %d of %d tiles have an alternative "
-              "partner on the same image" % (usable, n))
+              "partner on the same image; the other %d are excluded from BOTH "
+              "sides of the comparison" % (len(index), n, n - len(index)))
+        if not index:
+            raise SystemExit("no tile has a same-image alternative -- nothing to compare")
 
     # diagrams are the expensive part -- compute each (spec, downsample) once
     cache = {}
@@ -253,7 +280,7 @@ def main() -> None:
 
     combos = list(itertools.product(args.field_A, args.field_B, args.downsample,
                                     dim_sets, args.topo_projection))
-    print("\n%d tiles, %d combinations\n" % (n, len(combos)))
+    print("\n%d tiles compared, %d combinations\n" % (len(index), len(combos)))
     header = "%-20s %-18s %3s %5s %-9s %9s %9s %7s %7s" % (
         "field_A", "field_B", "ds", "dims", "proj", "true", "shuffled", "ratio", "AUROC")
     print(header); print("-" * len(header))
@@ -262,9 +289,9 @@ def main() -> None:
     for fa, fb, ds, dims, projname in combos:
         proj = None if projname == "auto" else projname
         da, db = cache[("A", fa, ds)], cache[("B", fb, ds)]
-        true = [float(diagram_distance(da[i], db[i], dims, proj)) for i in range(n)]
+        true = [float(diagram_distance(da[i], db[i], dims, proj)) for i in index]
         shuf = [float(diagram_distance(da[i], db[p[i]], dims, proj))
-                for p in perms for i in range(n)]
+                for p in perms for i in index]
         mt, ms = float(np.mean(true)), float(np.mean(shuf))
         row = (fa, fb, ds, ",".join(map(str, dims)), projname,
                mt, ms, ms / mt if mt else float("inf"), auroc(true, shuf))
@@ -284,7 +311,7 @@ def main() -> None:
     if len(rows) > 10:
         # Shuffled comparisons reuse the same B tiles, so they are not
         # n * shuffles independent samples; n is the honest denominator.
-        se = auroc_se(best[8], n, n)
+        se = auroc_se(best[8], len(index), len(index))
         print("\nNOTE: %d combinations on %d tiles. The 95%% band on the best AUROC is "
               "+/-%.3f,\n      and taking the maximum over many correlated "
               "combinations inflates it further,\n      so treat the top row as an "

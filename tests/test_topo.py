@@ -925,3 +925,21 @@ def test_within_slide_shuffles_differ_between_calls():
     perms = {tuple(int(x) for x in shuffled_partners(pairs, rng, True)[0])
              for _ in range(10)}
     assert len(perms) > 1
+
+
+def test_tiles_without_an_alternative_are_excluded_not_self_paired():
+    """Self-paired tiles would put true distances into the shuffled set."""
+    import numpy as np
+    from topo_i2i.validate_fields import shuffled_partners
+    pairs = [("A_r0c0.png",)*2, ("A_r0c1.png",)*2, ("LONE_r0c0.png",)*2]
+    perm, usable = shuffled_partners(pairs, np.random.default_rng(0), True)
+    assert usable == [0, 1]              # the lone tile is not in the comparison
+    assert 2 not in usable
+    for i in usable:
+        assert perm[i] != i
+
+
+def test_slide_regex_controls_the_grouping():
+    from topo_i2i.validate_fields import slide_of
+    assert slide_of("caseA_tile03_r1c0.png") == "caseA_tile03"
+    assert slide_of("caseA_tile03_r1c0.png", r"_tile\d+_r\d+c\d+$") == "caseA"

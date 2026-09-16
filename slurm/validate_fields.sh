@@ -96,6 +96,7 @@ for MARKER in $MARKERS; do
         --sample "$SAMPLE" \
         --seed "$SEED" \
         $( [ "$WITHIN_SLIDE" = "1" ] && echo --shuffle-within-slide ) \
+        ${SLIDE_REGEX:+--slide-regex "$SLIDE_REGEX"} \
         | tee "$report"
 done
 
