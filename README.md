@@ -229,6 +229,13 @@ topo-validate-fields --dataA tiles/ER/TrainValAB/valA --dataB tiles/ER/TrainValA
     --field-B hematoxylin/dab dab/hematoxylin dab+hematoxylin
 ```
 
+`--downsample` takes a list too, so resolution joins the cross product. That
+matters for cost: persistence scales with pixel count, so if a coarser field
+holds the same AUROC it is free signal — train at that `--topo-downsample`
+instead. Raw distances are *not* comparable across factors (the sum runs over
+more diagram points at finer resolution), but AUROC is, which is why it is the
+column to steer by.
+
 It scores the cross product of the specs given, so one run ranks every candidate
 in minutes rather than committing GPU-weeks to find out. The headline number is
 AUROC — the probability a true pair scores below a shuffled one. 0.5 is useless,

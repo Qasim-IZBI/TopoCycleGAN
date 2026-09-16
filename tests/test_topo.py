@@ -791,3 +791,11 @@ def test_registered_pairs_score_below_shuffled():
             for i in range(8) for j in range(8) if i != j]
     assert np.mean(true) < np.mean(shuf)
     assert auroc(true, shuf) > 0.75
+
+
+def test_validate_fields_sweeps_downsample():
+    from topo_i2i.validate_fields import build_parser
+    ns = build_parser().parse_args(
+        "--dataA a --dataB b --downsample 1 2 4".split())
+    assert ns.downsample == [1, 2, 4]
+    assert build_parser().parse_args("--dataA a --dataB b".split()).downsample == [1]

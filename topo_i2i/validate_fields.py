@@ -102,7 +102,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="merge rule for any 'a+b' spec")
     p.add_argument("--limit", type=int, default=64, help="tiles to use (0 = all)")
     p.add_argument("--image-size", type=int, default=256)
-    p.add_argument("--downsample", type=int, default=1)
+    p.add_argument("--downsample", type=int, nargs="+", default=[1], metavar="N",
+                   help="one or more pooling factors to score. Persistence cost "
+                        "falls roughly with the pixel count, so if a coarser "
+                        "field keeps the same AUROC it is free signal: train at "
+                        "that --topo-downsample instead")
     p.add_argument("--topo-dims", type=int, nargs="+", default=[0, 1])
     p.add_argument("--topo-projection", default="auto",
                    choices=("auto", "birth", "lifetime", "death"))
@@ -134,33 +138,41 @@ def main() -> None:
         if n < 2 or (p != np.arange(n)).all():     # a derangement: no true pair survives
             perms.append(p)
 
-    # diagrams are the expensive part -- compute each spec once
+    # diagrams are the expensive part -- compute each (spec, downsample) once
     cache = {}
-    for spec in args.field_A:
-        cache[("A", spec)] = diagrams_for(paths_a, spec, args.field_combine,
-                                          args.image_size, args.downsample, dims, invert)
-    for spec in args.field_B:
-        cache[("B", spec)] = diagrams_for(paths_b, spec, args.field_combine,
-                                          args.image_size, args.downsample, dims, invert)
+    for ds in args.downsample:
+        for spec in args.field_A:
+            cache[("A", spec, ds)] = diagrams_for(paths_a, spec, args.field_combine,
+                                                  args.image_size, ds, dims, invert)
+        for spec in args.field_B:
+            cache[("B", spec, ds)] = diagrams_for(paths_b, spec, args.field_combine,
+                                                  args.image_size, ds, dims, invert)
 
     print("\n%d tiles, dims=%s, projection=%s\n" % (n, list(dims), args.topo_projection))
-    header = "%-20s %-18s %9s %9s %7s %7s" % (
-        "field_A", "field_B", "true", "shuffled", "ratio", "AUROC")
+    header = "%-20s %-18s %3s %9s %9s %7s %7s" % (
+        "field_A", "field_B", "ds", "true", "shuffled", "ratio", "AUROC")
     print(header); print("-" * len(header))
 
     rows = []
-    for fa, fb in itertools.product(args.field_A, args.field_B):
-        da, db = cache[("A", fa)], cache[("B", fb)]
+    for fa, fb, ds in itertools.product(args.field_A, args.field_B, args.downsample):
+        da, db = cache[("A", fa, ds)], cache[("B", fb, ds)]
         true = [float(diagram_distance(da[i], db[i], dims, proj)) for i in range(n)]
         shuf = [float(diagram_distance(da[i], db[p[i]], dims, proj))
                 for p in perms for i in range(n)]
         mt, ms = float(np.mean(true)), float(np.mean(shuf))
-        row = (fa, fb, mt, ms, ms / mt if mt else float("inf"), auroc(true, shuf))
+        row = (fa, fb, ds, mt, ms, ms / mt if mt else float("inf"), auroc(true, shuf))
         rows.append(row)
-        print("%-20s %-18s %9.2f %9.2f %7.2f %7.3f" % row)
+        print("%-20s %-18s %3d %9.2f %9.2f %7.2f %7.3f" % row)
 
-    best = max(rows, key=lambda r: r[5])
-    print("\nbest separation: %s / %s  (AUROC %.3f)" % (best[0], best[1], best[5]))
+    best = max(rows, key=lambda r: r[6])
+    print("\nbest separation: %s / %s at --topo-downsample %d  (AUROC %.3f)"
+          % (best[0], best[1], best[2], best[6]))
+    # Raw distances are not comparable across downsample factors -- the sum runs
+    # over more diagram points at finer resolution -- but AUROC is.
+    coarsest = max((r for r in rows if r[6] >= best[6] - 0.01), key=lambda r: r[2])
+    if coarsest[2] > best[2]:
+        print("cheapest within 0.01 AUROC: %s / %s at --topo-downsample %d (AUROC %.3f)"
+              % (coarsest[0], coarsest[1], coarsest[2], coarsest[6]))
     print("AUROC 0.5 means the distance says nothing about which tiles belong together;")
     print("a field pair that cannot separate true from random here will not teach")
     print("ph_trans anything during training.")
