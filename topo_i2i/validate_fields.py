@@ -279,9 +279,15 @@ def main() -> None:
         else:
             perms.append(out)
     if args.shuffle_within_slide:
-        print("shuffling within source image: %d of %d tiles have an alternative "
-              "partner on the same image; the other %d are excluded from BOTH "
-              "sides of the comparison" % (len(index), n, n - len(index)))
+        groups = len({slide_of(a, args.slide_regex) for a, _ in pairs})
+        kind = ("source tile (adjacent quadrants -- a strict control)"
+                if args.slide_regex == DEFAULT_SLIDE_REGEX
+                else "custom grouping")
+        print("shuffling within group: regex %r -> %d groups over %d tiles, %s"
+              % (args.slide_regex, groups, n, kind))
+        print("  %d of %d tiles have an alternative partner in their group; the "
+              "other %d are excluded from BOTH sides of the comparison"
+              % (len(index), n, n - len(index)))
         if not index:
             raise SystemExit("no tile has a same-image alternative -- nothing to compare")
 
