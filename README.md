@@ -12,17 +12,23 @@ everything queues at once but training only starts when the vectors exist. If
 every marker already has a `stains_<marker>.json` it skips estimation
 automatically.
 
-The grid per marker is 10 cells — `lambda_topo` {2e-4, 2e-2, 2e-1} x `ph_cyc`
-{0,1} x `ph_trans` {0,1}, with `lambda_cycle` fixed at 10. The full factorial is
-12, but `ph_cyc=0` and `ph_trans=0` switches off every topological term, so those
-three collapse into one cell:
+The grid per marker is 13 cells — `lambda_topo` {2e-4, 2e-3, 2e-2, 2e-1} x
+`ph_cyc` {0,1} x `ph_trans` {0,1}, with `lambda_cycle` fixed at 10. The full
+factorial is 16, but `ph_cyc=0` and `ph_trans=0` switches off every topological
+term, so those four collapse into one cell:
 
 ```
-task 0  ER_baseline_cyclegan        <- vanilla CycleGAN
-task 1  ER_lt0.0002_cyc0_trans1
+task  0  ER_baseline_cyclegan        <- vanilla CycleGAN
+task  1  ER_lt0.0002_cyc0_trans1
 ...
-task 9  ER_lt0.2_cyc1_trans1
+task 12  ER_lt0.2_cyc1_trans1
 ```
+
+The weights are one decade apart and placed against the measured gradient ratio:
+at `lambda_topo=1` the PH term carries ~4160x the cycle gradient, so 2e-4 is
+parity, 2e-3 ~8x, 2e-2 ~83x and 2e-1 ~830x. The low end sits at parity
+deliberately — if the best cell landed on the grid's edge there would be no way
+to tell whether the search went low enough.
 
 **Task 0 is the baseline and runs the identical code path** — same data,
 schedule, capacity and optimiser, only the loss differs — so it is a fair

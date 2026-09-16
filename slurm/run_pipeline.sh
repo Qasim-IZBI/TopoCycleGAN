@@ -46,7 +46,7 @@ for m in $MARKERS; do
         continue
     fi
     jid=$(sbatch --parsable $dep --export="ALL,STAINS_DIR=${STAINS_DIR}" "$script")
-    echo "training array for ${m}: ${jid}  (10 cells, task 0 is the CycleGAN baseline)"
+    echo "training array for ${m}: ${jid}  (13 cells, task 0 is the CycleGAN baseline)"
 done
 
 echo

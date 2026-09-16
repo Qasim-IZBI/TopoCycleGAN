@@ -9,13 +9,13 @@
 #SBATCH --partition=clara
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
-#SBATCH --array=0-9   # 10 cells; see slurm/_grid.sh for the grid
+#SBATCH --array=0-12  # 13 cells; see slurm/_grid.sh for the grid
 
 # MIST Ki67: H&E -> Ki67 IHC.
 #
 # Run once before the first submit:  mkdir -p logs_topo
 #
-#   sbatch slurm/sweep_ki67.sh            # all 10 cells
+#   sbatch slurm/sweep_ki67.sh            # all 13 cells
 #   sbatch --array=0 slurm/sweep_ki67.sh  # the vanilla CycleGAN baseline only
 #
 # Needs stain vectors: run slurm/estimate_stains.sh first, or use

@@ -4,13 +4,19 @@
 # two always agree on what task N means. Not executable on its own.
 #
 #   lambda_cycle  fixed at 10 (the zoo's CycleGAN default)
-#   lambda_topo   {2e-4, 2e-2, 2e-1}
+#   lambda_topo   {2e-4, 2e-3, 2e-2, 2e-1}
 #   ph_cyc        {0, 1}
 #   ph_trans      {0, 1}
 #
-# The full factorial is 12, but ph_cyc=0 AND ph_trans=0 switches off every
-# topological term, so lambda_topo is inert there -- those 3 collapse to a single
-# cell, which IS the vanilla CycleGAN baseline. 10 cells remain.
+# The full factorial is 16, but ph_cyc=0 AND ph_trans=0 switches off every
+# topological term, so lambda_topo is inert there -- those 4 collapse to a single
+# cell, which IS the vanilla CycleGAN baseline. 13 cells remain.
+#
+# The weights are one decade apart and chosen against the measured gradient
+# ratio: at lambda_topo=1 the PH term carries ~4160x the cycle gradient, so
+# 2e-4 is parity, 2e-3 is ~8x, 2e-2 is ~83x and 2e-1 is ~830x. The low end has
+# to be at parity -- if the best cell sat on the grid's edge there would be no
+# way to tell whether the search went low enough.
 #
 # Task 0 is that baseline. It runs the same code path as every other cell --
 # same data, schedule, capacity and optimiser, only the loss differs -- so it is
@@ -27,6 +33,9 @@ CELLS=(
   "0.0002:0:1"
   "0.0002:1:0"
   "0.0002:1:1"
+  "0.002:0:1"
+  "0.002:1:0"
+  "0.002:1:1"
   "0.02:0:1"
   "0.02:1:0"
   "0.02:1:1"
