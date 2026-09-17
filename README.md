@@ -328,6 +328,30 @@ like.
 score field combinations on val — writing `stains_<marker>.json` (report these in
 the paper) and `fields_<marker>.txt`.
 
+## Looking at one pair
+
+```bash
+topo-inspect --imageA valA/10M2102916_10_17_r0c0.png \
+             --imageB valB/10M2102916_10_17_r0c0.png \
+             --stains field_validation_estimated/stains_ER.json \
+             --field-A stain1/stain2 --field-B stain1+stain2 \
+             --downsample 2 --topo-dims 0 1 --topo-projection birth \
+             --outdir inspect/ER_tile
+```
+
+Walks one image pair through the whole loss and writes every intermediate: both
+deconvolved stain channels per domain, the scalar field each is reduced to, the
+persistence diagram of each field as CSV, the distance broken down per homology
+dimension, and an `overview.png` panel. `summary.json` records the numbers and
+the exact settings used.
+
+Use it to check the deconvolution looks right on a tile you recognise before
+trusting a validation table — it is how you would catch a stain estimate that has
+failed, since a `stain1` channel that shows overall density rather than nuclei is
+obvious by eye and invisible in an AUROC. With no `--stains` the vectors are
+estimated from the two images alone, which is fine for a quick look and too noisy
+to report.
+
 ## Choosing the fields before training
 
 MIST ships registered H&E/IHC pairs, so the topological distance has a ground

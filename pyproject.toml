@@ -31,6 +31,7 @@ topo-crop = "topo_i2i.crop:main"
 topo-infer = "topo_i2i.inference:main"
 topo-validate-fields = "topo_i2i.validate_fields:main"
 topo-estimate-stains = "topo_i2i.stains:main"
+topo-inspect = "topo_i2i.inspect:main"
 
 [tool.setuptools.packages.find]
 include = ["topo_i2i*"]

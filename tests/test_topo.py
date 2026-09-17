@@ -1069,3 +1069,65 @@ def test_capped_sampling_still_recovers_the_vectors(tmp_path):
     assert angle_between(res["A"]["stain1"], H) < 4.0
     assert angle_between(res["B"]["stain2"], D) < 4.0
     assert res["meta"]["pixels_per_tile"] == 4000
+
+
+# --- per-pair inspection --------------------------------------------------- #
+
+def test_inspect_writes_every_intermediate(tmp_path):
+    import json
+    import numpy as np
+    from topo_i2i.fields import STAIN_VECTORS
+    from topo_i2i.inspect import build_parser, main
+    H = np.array(STAIN_VECTORS["hematoxylin"]); H /= np.linalg.norm(H)
+    E = np.array(STAIN_VECTORS["eosin"]);       E /= np.linalg.norm(E)
+    D = np.array(STAIN_VECTORS["dab"]);         D /= np.linalg.norm(D)
+    a, b = tmp_path/"a.png", tmp_path/"b.png"
+    _stain_tile(str(a), H, E, 0)
+    _stain_tile(str(b), H, D, 1)
+    stains = tmp_path/"s.json"
+    stains.write_text(json.dumps({
+        "A": {"stain1": list(H), "stain2": list(E), "separation_deg": 30.0},
+        "B": {"stain1": list(H), "stain2": list(D), "separation_deg": 37.0},
+        "meta": {}}))
+    out = tmp_path/"out"
+
+    import sys
+    argv = sys.argv
+    sys.argv = ["topo-inspect", "--imageA", str(a), "--imageB", str(b),
+                "--stains", str(stains), "--image-size", "64", "--downsample", "1",
+                "--outdir", str(out)]
+    try:
+        main()
+    finally:
+        sys.argv = argv
+
+    for name in ("A_diagram.csv", "B_diagram.csv", "A_field.png", "B_field.png",
+                 "A_stain1.png", "A_stain2.png", "summary.json"):
+        assert (out/name).exists(), name
+
+    s = json.loads((out/"summary.json").read_text())
+    assert s["distance_total"] > 0
+    assert set(s["distance_per_dim"]) == {"0", "1"}
+    # the per-dimension distances must add up to the total
+    assert sum(s["distance_per_dim"].values()) == pytest.approx(s["distance_total"], rel=1e-6)
+
+    header, *rows = (out/"A_diagram.csv").read_text().strip().split("\n")
+    assert header == "dim,birth,death,lifetime"
+    dim, birth, death, life = rows[0].split(",")
+    assert float(death) - float(birth) == pytest.approx(float(life), abs=1e-5)
+
+
+def test_inspect_estimates_vectors_when_none_given(tmp_path):
+    import numpy as np
+    from topo_i2i.fields import STAIN_VECTORS
+    from topo_i2i.inspect import estimate_from_images
+    from topo_i2i.stains import angle_between
+    H = np.array(STAIN_VECTORS["hematoxylin"]); H /= np.linalg.norm(H)
+    E = np.array(STAIN_VECTORS["eosin"]);       E /= np.linalg.norm(E)
+    D = np.array(STAIN_VECTORS["dab"]);         D /= np.linalg.norm(D)
+    a, b = tmp_path/"a.png", tmp_path/"b.png"
+    _stain_tile(str(a), H, E, 3, n=192)
+    _stain_tile(str(b), H, D, 4, n=192)
+    v = estimate_from_images(str(a), str(b), 192)
+    assert set(v) == {"A", "B"}
+    assert angle_between(v["A"]["stain1"], H) < 10.0
