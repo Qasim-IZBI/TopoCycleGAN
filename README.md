@@ -512,6 +512,13 @@ The unstratified arm never decides anything. It runs so the report can print
 `inflation = unstratified − strict`: how much of the apparent signal was the
 model recognising which slide a tile came from.
 
+`LIMIT` defaults to `auto` — half that marker's matched pairs, so the two slices
+together use every tile. Don't lower it to save time: under the strict control a
+tile is dropped unless a groupmate lands in the *same* slice, so a small `LIMIT`
+breaks the groups apart. On BCI's 1560 tiles, `LIMIT=512` leaves 355 usable per
+slice against 682 for `auto` — a 1.4× wider noise band, and a correspondingly
+higher bar for a real effect to clear.
+
 Two outcomes:
 
 - **ph_trans supported** — the best *confirmed* setting (never the screening

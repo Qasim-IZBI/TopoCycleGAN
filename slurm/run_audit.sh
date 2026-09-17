@@ -36,7 +36,7 @@ STAINS_DIR=${STAINS_DIR:-/work2/bz66izin-TopoCG/field_validation_estimated}
 AUDIT=${AUDIT:-/work2/bz66izin-TopoCG/field_audit}
 TILES=${TILES:-/work2/bz66izin-TopoCG/MIST_tiles}
 TILES_BCI=${TILES_BCI:-/work2/bz66izin-TopoCG/BCI_tiles}
-LIMIT=${LIMIT:-512}
+LIMIT=${LIMIT:-auto}   # per marker: half its matched pairs
 SEED=${SEED:-0}
 
 # These run under bash, not sbatch, so BASH_SOURCE really does point at this

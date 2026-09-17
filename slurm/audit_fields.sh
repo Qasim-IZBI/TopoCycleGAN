@@ -50,14 +50,16 @@ TILES_BCI=${TILES_BCI:-/work2/bz66izin-TopoCG/BCI_tiles}
 STAINS_DIR=${STAINS_DIR:-/work2/bz66izin-TopoCG/field_validation_estimated}
 AUDIT=${AUDIT:-/work2/bz66izin-TopoCG/field_audit}
 
-LIMIT=${LIMIT:-512}            # tiles per slice; the run uses 2 x LIMIT in total.
-                               # Set it to half the matched tiles so both slices
-                               # together use all of them: under the strict
-                               # control a tile is dropped unless a groupmate
-                               # lands in the SAME slice, so a small LIMIT breaks
-                               # up groups and costs more power than it saves
-                               # time (1560 BCI tiles: LIMIT=512 leaves 355
-                               # usable per slice, LIMIT=780 leaves 682)
+LIMIT=${LIMIT:-auto}           # tiles per slice; the run uses 2 x LIMIT in all.
+                               # 'auto' is half the matched pairs, so the two
+                               # slices together use every tile. That is what you
+                               # want: under the strict control a tile is dropped
+                               # unless a groupmate lands in the SAME slice, so a
+                               # small LIMIT breaks the groups up and costs more
+                               # power than it saves time. On BCI's 1560 tiles
+                               # LIMIT=512 leaves 355 usable per slice against
+                               # 682 for auto -- a 1.4x wider noise band for no
+                               # gain. Give a number only to subsample on purpose.
 SEED=${SEED:-0}                # MUST match between screen and confirm, or the
                                # two slices stop being disjoint
 SHUFFLES=${SHUFFLES:-5}
@@ -109,6 +111,19 @@ fi
 
 cell_dir="${AUDIT}/${MARKER}"
 mkdir -p "$cell_dir"
+
+# Resolve LIMIT before anything uses it. Every cell of a marker derives the same
+# number from the same directory, so the four cells stay comparable and slice 2
+# stays exactly disjoint from slice 1.
+if [ "$LIMIT" = "auto" ] || [ "$LIMIT" = "0" ]; then
+    LIMIT=$(python -c "
+import sys
+from topo_i2i.validate_fields import matched_pairs
+pairs, _ = matched_pairs(sys.argv[1], sys.argv[2], limit=0)
+print(max(1, len(pairs) // 2))
+" "$VAL_A" "$VAL_B")
+    echo "LIMIT=auto -> ${LIMIT} tiles per slice (half the matched pairs)"
+fi
 
 stain_arg=()
 if [ "$VECTORS" = "estimated" ]; then
