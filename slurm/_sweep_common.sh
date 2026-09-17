@@ -118,7 +118,15 @@ fi
 #   topo-crop --input  /work2/bz66izin-TopoCG/MIST/${MARKER}/TrainValAB/ \
 #             --output /work2/bz66izin-TopoCG/MIST_tiles/${MARKER}/TrainValAB/ \
 #             --tile_size 512 --resize_to 256
-DATA_DIR=${DATA_DIR:-/work2/bz66izin-TopoCG/MIST_tiles/${MARKER}/TrainValAB}
+# BCI is tiled into its own root by prepare_bci.sh, so the tile root is
+# per-marker -- the same split audit_fields, inspect and estimate_stains make.
+TILES=${TILES:-/work2/bz66izin-TopoCG/MIST_tiles}
+TILES_BCI=${TILES_BCI:-/work2/bz66izin-TopoCG/BCI_tiles}
+case "$MARKER" in
+    BCI) TILE_ROOT="$TILES_BCI" ;;
+    *)   TILE_ROOT="$TILES" ;;
+esac
+DATA_DIR=${DATA_DIR:-${TILE_ROOT}/${MARKER}/TrainValAB}
 DATA_A=${DATA_A:-${DATA_DIR}/trainA/}
 DATA_B=${DATA_B:-${DATA_DIR}/trainB/}
 
