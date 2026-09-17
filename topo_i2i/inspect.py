@@ -25,12 +25,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 
 import numpy as np
 import torch
 from PIL import Image
 
-from topo_i2i.fields import make_field, split_specs
+from topo_i2i.fields import STAIN_VECTORS, make_field, split_specs
 from topo_i2i.losses import _project, _resolve_projection, diagram_distance
 from topo_i2i.persistence import persistence_diagram
 from topo_i2i.stains import estimate_stains, load_vectors, order_like, rgb_to_od
@@ -65,6 +66,10 @@ def estimate_from_images(img_a, img_b, size):
         v1, v2 = order_like(estimate_stains(rgb_to_od(arr).reshape(-1, 3)))
         out[tag] = {"stain1": tuple(v1), "stain2": tuple(v2)}
     return out
+
+
+def specs_of(args, tag: str) -> str:
+    return args.field_A if tag == "A" else args.field_B
 
 
 def write_diagram_csv(dgm, path) -> None:
@@ -140,6 +145,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--stains", default=None,
                    help="stain vectors from topo-estimate-stains; estimated from "
                         "the two images if omitted")
+    p.add_argument("--literature", action="store_true",
+                   help="use the built-in fields.STAIN_VECTORS table instead of "
+                        "estimating or loading anything. This is what training "
+                        "does when the audit's fixed-vector arm wins, so it is "
+                        "how you inspect that setting faithfully.")
     p.add_argument("--field-A", default="stain1/stain2")
     p.add_argument("--field-B", default="stain1+stain2")
     p.add_argument("--field-combine", default="sum", choices=("max", "sum", "mean"))
@@ -160,7 +170,25 @@ def main() -> None:
     invert = not args.no_invert
     os.makedirs(args.outdir, exist_ok=True)
 
-    if args.stains:
+    if args.literature and args.stains:
+        raise SystemExit("--literature and --stains are mutually exclusive")
+    if args.literature:
+        # None means make_field falls through to fields.STAIN_VECTORS, exactly
+        # as training does with no --stains.
+        unknown = sorted({n for tag in ("A", "B")
+                          for n in re.split(r"[/+]", specs_of(args, tag))
+                          if n and n != "gray" and n not in STAIN_VECTORS})
+        if unknown:
+            raise SystemExit(
+                "--literature needs specs named after real stains, but %s "
+                "%s no entry in the literature table.\nNames like stain1/stain2 "
+                "are positional and only mean something with estimated vectors, "
+                "so pass --stains for those.\nKnown stains: %s"
+                % (", ".join(unknown), "have" if len(unknown) > 1 else "has",
+                   ", ".join(sorted(STAIN_VECTORS))))
+        vectors = {"A": None, "B": None}
+        src = "the built-in literature table"
+    elif args.stains:
         vectors, _ = load_vectors(args.stains)
         src = args.stains
     else:
@@ -168,9 +196,15 @@ def main() -> None:
         src = "estimated from these two images (noisy -- one tile per domain)"
     print("stain vectors: %s" % src)
     for tag in ("A", "B"):
-        print("  %s stain1 %s  stain2 %s"
-              % (tag, np.round(vectors[tag]["stain1"], 4),
-                 np.round(vectors[tag]["stain2"], 4)))
+        if vectors[tag] is None:
+            used = [n for n in re.split(r"[/+]", specs_of(args, tag)) if n]
+            print("  %s %s" % (tag, "  ".join(
+                "%s %s" % (n, np.round(STAIN_VECTORS[n], 4))
+                for n in used if n in STAIN_VECTORS)))
+        else:
+            print("  %s stain1 %s  stain2 %s"
+                  % (tag, np.round(vectors[tag]["stain1"], 4),
+                     np.round(vectors[tag]["stain2"], 4)))
 
     images = {"A": args.imageA, "B": args.imageB}
     specs = {"A": args.field_A, "B": args.field_B}
@@ -237,8 +271,11 @@ def main() -> None:
                     "dims": list(dims), "projection": args.topo_projection,
                     "downsample": args.downsample, "combine": args.field_combine,
                     "invert": invert,
-                    "vectors": {t: {k: list(map(float, v))
-                                    for k, v in vectors[t].items()} for t in ("A", "B")}})
+                    "vector_source": src,
+                    "vectors": {t: (None if vectors[t] is None
+                                    else {k: list(map(float, v))
+                                          for k, v in vectors[t].items()})
+                                for t in ("A", "B")}})
     with open(os.path.join(args.outdir, "summary.json"), "w") as fh:
         json.dump(summary, fh, indent=2)
 

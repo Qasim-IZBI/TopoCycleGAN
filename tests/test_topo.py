@@ -1388,3 +1388,61 @@ def test_gradient_lands_on_the_pixel_that_set_the_value():
     assert len(touched) > 0
     for v in vals:
         assert torch.isclose(b.detach(), v).any(), "gradient on a non-critical pixel"
+
+
+# --------------------------------------------------------------------------
+# topo-inspect --literature: look at what training actually runs when the
+# audit's fixed-vector arm wins
+# --------------------------------------------------------------------------
+def _inspect_argv(tmp_path, out, *extra, field_a="eosin/hematoxylin",
+                  field_b="hematoxylin+dab"):
+    import numpy as np
+    from topo_i2i.fields import STAIN_VECTORS
+    H = np.array(STAIN_VECTORS["hematoxylin"]); H /= np.linalg.norm(H)
+    E = np.array(STAIN_VECTORS["eosin"]);       E /= np.linalg.norm(E)
+    D = np.array(STAIN_VECTORS["dab"]);         D /= np.linalg.norm(D)
+    a, b = tmp_path / "a.png", tmp_path / "b.png"
+    _stain_tile(str(a), H, E, 0)
+    _stain_tile(str(b), H, D, 1)
+    return ["topo-inspect", "--imageA", str(a), "--imageB", str(b),
+            "--field-A", field_a, "--field-B", field_b,
+            "--image-size", "64", "--downsample", "1",
+            "--outdir", str(out)] + list(extra)
+
+
+def _run_argv(argv):
+    import sys
+    from topo_i2i.inspect import main
+    saved = sys.argv
+    sys.argv = argv
+    try:
+        main()
+    finally:
+        sys.argv = saved
+
+
+def test_literature_uses_the_builtin_table_and_records_it(tmp_path):
+    import json
+    out = tmp_path / "lit"
+    _run_argv(_inspect_argv(tmp_path, out, "--literature"))
+    summary = json.loads((out / "summary.json").read_text())
+    assert summary["vector_source"] == "the built-in literature table"
+    assert summary["vectors"]["A"] is None, "no estimated vectors should be recorded"
+    assert (out / "A_diagram.csv").exists()
+
+
+def test_literature_rejects_positional_stain_names(tmp_path):
+    """stain1/stain2 only mean something with estimated vectors."""
+    out = tmp_path / "bad"
+    with pytest.raises(SystemExit) as e:
+        _run_argv(_inspect_argv(tmp_path, out, "--literature",
+                                field_a="stain1/stain2", field_b="stain1+stain2"))
+    msg = str(e.value)
+    assert "stain1" in msg and "--stains" in msg
+
+
+def test_literature_and_stains_are_mutually_exclusive(tmp_path):
+    out = tmp_path / "both"
+    with pytest.raises(SystemExit):
+        _run_argv(_inspect_argv(tmp_path, out, "--literature",
+                                "--stains", str(tmp_path / "nope.json")))

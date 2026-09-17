@@ -354,6 +354,11 @@ panel. `summary.json` records the numbers and the exact settings used.
 The field PNGs are contrast stretched for viewing, which is monotone and so
 leaves the topology unchanged; the `.npy` files hold the numbers.
 
+`--literature` uses the built-in stain table instead of estimating or loading
+vectors — which is what training does when the audit's fixed-vector arm wins, so
+it is how you inspect that setting faithfully. It refuses positional names like
+`stain1/stain2`, which only mean something alongside estimated vectors.
+
 On the cluster, `inspect.sh` does this for a batch of pairs:
 
 ```bash
@@ -362,6 +367,14 @@ sbatch inspect.sh                                     # 4 MIST markers
 sbatch --export=ALL,MARKERS=BCI inspect.sh            # just BCI
 sbatch --export=ALL,MARKERS=Ki67,PAIRS=16 inspect.sh  # more tiles
 MARKERS=ER PAIRS=2 bash inspect.sh                    # locally, quick
+```
+
+Point it at an audit to inspect exactly what the sweep will train, vectors
+included — the same `AUDIT_DIR` the training scripts take:
+
+```bash
+sbatch --export=ALL,MARKERS=BCI,AUDIT_DIR=/work2/bz66izin-TopoCG/field_audit_v2 \
+       inspect.sh
 ```
 
 It draws `PAIRS` tiles per marker with the same `matched_pairs()`, `SEED` and

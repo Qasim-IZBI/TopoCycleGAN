@@ -28,6 +28,10 @@
 #   sbatch --export=ALL,MARKERS=Ki67,PAIRS=16 inspect.sh
 #   MARKERS=ER PAIRS=2 bash inspect.sh                 # locally, quick
 #
+#   # exactly the setting the audit chose, before committing GPU to it:
+#   sbatch --export=ALL,MARKERS=BCI,AUDIT_DIR=/work2/bz66izin-TopoCG/field_audit_v2 \
+#          inspect.sh
+#
 # Output: ${OUT}/<marker>/<tile>/ with the deconvolved channels, the merged
 # image the diagram is built from, the filtered field as PNG and .npy, both
 # persistence diagrams as CSV, overview.png and summary.json. A table of the
@@ -54,15 +58,20 @@ SEED=${SEED:-0}                # keep at the validation run's seed to inspect
 SAMPLE=${SAMPLE:-random}       # tiles from the same slice it scored
 OFFSET=${OFFSET:-0}
 
-# Defaults deliberately mirror _sweep_common.sh: change them there and
-# here together, or the diagnostic stops describing the training run.
-FIELD_A=${FIELD_A:-stain1/stain2}
-FIELD_B=${FIELD_B:-stain1+stain2}
-FIELD_COMBINE=${FIELD_COMBINE:-sum}
-DOWNSAMPLE=${DOWNSAMPLE:-2}
-DIMS=${DIMS:-"0 1"}
-PROJECTION=${PROJECTION:-birth}
 IMAGE_SIZE=${IMAGE_SIZE:-256}
+# The field defaults are NOT applied here: AUDIT_DIR sources a per-marker file
+# whose assignments are ${VAR:-...}, so anything already set would pre-empt it.
+# They are applied inside the loop, after that source. They deliberately mirror
+# _sweep_common.sh -- change them there and here together, or the diagnostic
+# stops describing the training run.
+default_fields() {
+    FIELD_A=${FIELD_A:-stain1/stain2}
+    FIELD_B=${FIELD_B:-stain1+stain2}
+    FIELD_COMBINE=${FIELD_COMBINE:-sum}
+    DOWNSAMPLE=${DOWNSAMPLE:-2}
+    DIMS=${DIMS:-"0 1"}
+    PROJECTION=${PROJECTION:-birth}
+}
 
 tiles_root() {
     case "$1" in
@@ -74,6 +83,9 @@ tiles_root() {
 mkdir -p "$OUT"
 
 for MARKER in $MARKERS; do
+  # A subshell per marker: AUDIT_DIR sources a per-marker env file below, and
+  # those values must not leak into the next marker's iteration.
+  (
     root="$(tiles_root "$MARKER")"
     DIR_A="${root}/${MARKER}/TrainValAB/${SPLIT}A"
     DIR_B="${root}/${MARKER}/TrainValAB/${SPLIT}B"
@@ -82,22 +94,51 @@ for MARKER in $MARKERS; do
         continue
     fi
 
-    stains="${STAINS_DIR}/stains_${MARKER}.json"
+    # Inspect exactly what training will run: AUDIT_DIR pulls the field, the
+    # downsample, the dims, the projection and the vector source straight from
+    # the audit's recommendation, so the pictures cannot drift from the sweep.
+    from_audit=""
+    if [ -n "${AUDIT_DIR:-}" ]; then
+        audit_env="${AUDIT_DIR}/recommended_${MARKER}.env"
+        if [ ! -f "$audit_env" ]; then
+            echo "[skip] ${MARKER}: ${audit_env} not found"
+            exit 0
+        fi
+        source "$audit_env"
+        # topo-train and topo-inspect spell these differently.
+        DOWNSAMPLE=${TOPO_DOWNSAMPLE:-$DOWNSAMPLE}
+        DIMS=${TOPO_DIMS:-$DIMS}
+        PROJECTION=${TOPO_PROJECTION:-$PROJECTION}
+        from_audit=" (from ${audit_env})"
+    fi
+    default_fields
+
     stain_arg=()
-    if [ -f "$stains" ]; then
-        stain_arg=(--stains "$stains")
+    if [ -n "${AUDIT_DIR:-}" ] && [ -z "${STAINS}" ]; then
+        # The audit's fixed-vector arm won, so training uses the literature
+        # table and so must this.
+        stain_arg=(--literature)
+        vec_note="literature table (the audit chose it)"
+    elif [ -n "${AUDIT_DIR:-}" ] && [ -n "${STAINS}" ]; then
+        stain_arg=(--stains "${STAINS}")
+        vec_note="${STAINS}"
+    elif [ -f "${STAINS_DIR}/stains_${MARKER}.json" ]; then
+        stain_arg=(--stains "${STAINS_DIR}/stains_${MARKER}.json")
+        vec_note="${STAINS_DIR}/stains_${MARKER}.json"
     else
         # Falling back to per-tile estimation is fine for a look, but one tile
         # per domain is a noisy Macenko -- do not read vectors off these.
-        echo "[warn] ${MARKER}: ${stains} not found; estimating vectors per tile"
+        echo "[warn] ${MARKER}: no stains JSON; estimating vectors per tile"
+        vec_note="estimated per tile -- noisy, do not report"
     fi
 
     echo
     echo "================ ${MARKER} ================"
     echo "  A ${DIR_A}"
     echo "  B ${DIR_B}"
-    echo "  field-A ${FIELD_A}   field-B ${FIELD_B} (${FIELD_COMBINE})"
+    echo "  field-A ${FIELD_A}   field-B ${FIELD_B} (${FIELD_COMBINE})${from_audit}"
     echo "  downsample ${DOWNSAMPLE}  dims ${DIMS}  projection ${PROJECTION}"
+    echo "  vectors ${vec_note}"
 
     # Same pairing, seed and slice as topo-validate-fields, so the tiles here are
     # drawn from the population the AUROC was measured on.
@@ -133,6 +174,7 @@ PY
             --image-size "$IMAGE_SIZE" \
             --outdir "${OUT}/${MARKER}/${tile}"
     done <<< "$pairlist"
+  )
 done
 
 # One table of every distance computed, so the log ends with something readable
