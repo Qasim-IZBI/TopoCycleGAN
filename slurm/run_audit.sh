@@ -58,6 +58,18 @@ done
 common="MARKERS=${MARKERS},STAINS_DIR=${STAINS_DIR},AUDIT=${AUDIT}"
 common="${common},TILES=${TILES},TILES_BCI=${TILES_BCI},LIMIT=${LIMIT},SEED=${SEED}"
 [ -n "${SLIDE_REGEX:-}" ] && common="${common},SLIDE_REGEX=${SLIDE_REGEX}"
+# Forward each marker's own tile root, and any field-grid override, explicitly
+# rather than relying on --export=ALL to carry them. ALL usually does, but a
+# site can configure it away, and the failure would be a whole array of cells
+# looking for VS under the MIST root.
+for m in $MARKERS; do
+    var="TILES_${m}"
+    [ -n "${!var:-}" ] && common="${common},${var}=${!var}"
+done
+for var in EST_FIELDS_A EST_FIELDS_B FIX_FIELDS_A FIX_FIELDS_B \
+           DOWNSAMPLE PROJECTIONS DIMS_SETS COMBINE IMAGE_SIZE SHUFFLES; do
+    [ -n "${!var:-}" ] && common="${common},${var}=${!var}"
+done
 
 dep=""
 if [ -n "$missing" ]; then
