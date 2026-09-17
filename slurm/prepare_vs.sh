@@ -66,6 +66,13 @@ COPY=${COPY:-0}
 # set. Only meaningful if the two sets share a case numbering -- the script
 # reports whether they do.
 EXCLUDE_VAL_CASES=${EXCLUDE_VAL_CASES:-0}
+# WSI tiling emits background. A blank tile is not harmless: deconvolution
+# amplifies sensor and compression noise into the field, and persistence then
+# finds hundreds of features in it -- on a near-empty BCI tile, 972 H0 and 1690
+# H1, all noise. In the audit that dilutes real signal; in training it teaches
+# the generator to invent tissue. MIN_TISSUE=0 keeps everything.
+MIN_TISSUE=${MIN_TISSUE:-0.10}
+WHITE_LEVEL=${WHITE_LEVEL:-220}
 
 echo "train A (H&E, unregistered) ${TRAIN_A}"
 echo "train B (SR,  unregistered) ${TRAIN_B}"
@@ -73,13 +80,23 @@ echo "val   A (H&E, REGISTERED)   ${VAL_A}"
 echo "val   B (SR,  REGISTERED)   ${VAL_B}"
 echo "out                         ${OUT}"
 echo "exclude val cases from train: ${EXCLUDE_VAL_CASES}"
+echo "min tissue fraction:          ${MIN_TISSUE} (below ${WHITE_LEVEL} grey)"
 echo
 
-python - "$TRAIN_A" "$TRAIN_B" "$VAL_A" "$VAL_B" "$OUT" "$COPY" "$EXCLUDE_VAL_CASES" <<'PY'
+python - "$TRAIN_A" "$TRAIN_B" "$VAL_A" "$VAL_B" "$OUT" "$COPY" "$EXCLUDE_VAL_CASES" \
+         "$MIN_TISSUE" "$WHITE_LEVEL" <<'PY'
 import csv, os, shutil, sys
+from concurrent.futures import ThreadPoolExecutor
 
-train_a, train_b, val_a, val_b, out, copy, exclude = sys.argv[1:]
+import numpy as np
+from PIL import Image
+
+from topo_i2i.crop import tissue_fraction
+
+(train_a, train_b, val_a, val_b, out, copy, exclude,
+ min_tissue, white_level) = sys.argv[1:]
 copy, exclude = copy == "1", exclude == "1"
+min_tissue, white_level = float(min_tissue), int(white_level)
 EXTS = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp")
 
 
@@ -174,15 +191,6 @@ if n_paired == 0:
         "sorted order and every AUROC would be meaningless. Check that the two\n"
         "domains cover the same slide coordinates.")
 
-# With n tiles per slice the pre-registered bar is 0.5 + 2.58 * sqrt(1/6 / n).
-# Say it now, so a weak verdict later is read as low power rather than no signal.
-per_slice = n_paired // 2
-bar = 0.5 + 2.58 * (0.16667 / max(per_slice, 1)) ** 0.5
-print("\n  LIMIT=auto will give %d tiles per slice, so a candidate has to reach"
-      % per_slice)
-print("  AUROC %.3f to be certified. MIST cleared ~0.53-0.55 and BCI 0.558 with" % bar)
-print("  1700+ tiles per slice; on %d a real effect of that size may not clear."
-      % per_slice)
 
 overlap = sorted(set(ta) & set(shared_cases))
 if overlap:
@@ -193,6 +201,43 @@ if overlap:
                          "  paired metric against ground truth."))
 else:
     print("\n  Train and val use different case names, so nothing overlaps.")
+
+# ---------------------------------------------------------------------------
+# Tissue survey. Every tile that might be linked gets measured, so the threshold
+# can be chosen against the actual distribution rather than guessed at.
+# ---------------------------------------------------------------------------
+def _tissue(path):
+    try:
+        with Image.open(path) as im:
+            return path, tissue_fraction(im, white_level)
+    except Exception:
+        return path, 0.0
+
+
+candidates = set()
+for idx in (ta, tb):
+    for case, tiles in idx.items():
+        if exclude and case in shared_cases:
+            continue
+        candidates.update(tiles.values())
+for case in shared_cases:
+    for tile, partner in paired[case]:
+        candidates.add(va[case][tile])
+        candidates.add(vb[case][partner])
+
+# Threads, not processes: PIL releases the GIL while decoding, so this scales,
+# and a process pool would try to re-import __main__ -- which is stdin here.
+print("\nmeasuring tissue in %d tiles..." % len(candidates))
+with ThreadPoolExecutor(min((os.cpu_count() or 4) * 2, 32)) as pool:
+    tissue = dict(pool.map(_tissue, sorted(candidates)))
+
+vals = np.sort(np.fromiter(tissue.values(), dtype=float))
+print("  tissue fraction deciles: %s"
+      % "  ".join("%.2f" % v for v in np.percentile(vals, np.arange(0, 101, 10))))
+for t in (0.01, 0.05, 0.10, 0.25, 0.50):
+    print("    %d tiles (%.1f%%) fall below %.2f"
+          % (int((vals < t).sum()), 100.0 * (vals < t).mean(), t))
+print("  keeping tiles at or above %.2f" % min_tissue)
 
 for sub in ("trainA", "trainB", "valA", "valB"):
     d = os.path.join(out, sub)
@@ -208,15 +253,17 @@ def link(src, dst):
         os.symlink(os.path.abspath(src), dst)
 
 
-counts = {}
-# Training: everything, unpaired, no id matching required.
+counts, dropped = {}, {}
+# Training: everything with tissue in it, unpaired, no id matching required.
 for idx, sub in ((ta, "trainA"), (tb, "trainB")):
     for case, tiles in idx.items():
         if exclude and case in shared_cases:
             continue
         for tile, src in tiles.items():
-            # <case>_<id> keeps the case recoverable from the filename, which is
-            # what --slide-regex '_[0-9]+$' groups on.
+            if tissue.get(src, 1.0) < min_tissue:
+                dropped[sub] = dropped.get(sub, 0) + 1
+                continue
+            # <case>_<id>: training is unpaired, so the id is only an identifier.
             name = "%s_%s%s" % (case, tile, os.path.splitext(src)[1])
             link(src, os.path.join(out, sub, name))
             counts[sub] = counts.get(sub, 0) + 1
@@ -234,6 +281,12 @@ for idx, sub in ((ta, "trainA"), (tb, "trainB")):
 # case-level control.
 for case in shared_cases:
     for tile, partner in paired[case]:
+        # A pair is only useful if BOTH sides show tissue: correspondence
+        # between a tile and an empty one is not something the audit can test.
+        if min(tissue.get(va[case][tile], 1.0),
+               tissue.get(vb[case][partner], 1.0)) < min_tissue:
+            dropped["val"] = dropped.get("val", 0) + 1
+            continue
         pos = by_pos.get((case, tile))
         if pos is None:
             name_stem = "%s_%s" % (case, tile)          # no metadata: id only
@@ -249,19 +302,26 @@ for case in shared_cases:
 
 print()
 for k in ("trainA", "trainB", "valA", "valB"):
-    print("  %-7s %6d" % (k, counts.get(k, 0)))
+    note = ""
+    if k.startswith("train") and dropped.get(k):
+        note = "   (%d dropped as background)" % dropped[k]
+    if k.startswith("val") and dropped.get("val"):
+        note = "   (%d pairs dropped: one or both sides background)" % dropped["val"]
+    print("  %-7s %6d%s" % (k, counts.get(k, 0), note))
+
+kept_pairs = counts.get("valA", 0)
+if kept_pairs:
+    per_slice = kept_pairs // 2
+    bar = 0.5 + 2.58 * (0.16667 / max(per_slice, 1)) ** 0.5
+    print("\n  after filtering: %d registered pairs -> %d per slice, bar AUROC %.3f"
+          % (kept_pairs, per_slice, bar))
 PY
 
 echo
-echo "A metadata file, in case it carries tile coordinates -- with those you"
-echo "could group by SOURCE TILE like MIST and BCI do, a stricter control than"
-echo "grouping by case:"
-meta=$(find "$VAL_A" -name tiles_metadata.csv 2>/dev/null | head -1)
-if [ -n "$meta" ]; then
-    echo "  ${meta}"
-    echo "  header: $(head -1 "$meta")"
-    echo "  row:    $(sed -n 2p "$meta")"
-fi
+echo "Tissue was measured from the images (fraction of pixels darker than"
+echo "${WHITE_LEVEL} in grey). Each case also ships a masks/ directory -- if those are"
+echo "tissue masks rather than annotations, measuring from them would be both"
+echo "faster and more faithful than this greyscale rule. Check one and say so."
 
 echo
 echo "================================================================"

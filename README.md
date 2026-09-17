@@ -341,6 +341,17 @@ It also prints the AUROC a candidate will have to reach, since with only five
 registered cases the bar is much higher than MIST's or BCI's — read a weak
 verdict there as low power, not as absent signal.
 
+WSI tiling emits background, and a blank tile is not harmless: deconvolution
+amplifies sensor and compression noise into the field, and persistence then finds
+hundreds of features in it — on a near-empty BCI tile, 972 H₀ and 1690 H₁, all
+noise. `MIN_TISSUE` (default 0.10, the fraction of pixels darker than
+`WHITE_LEVEL`) drops them. Training filters each domain independently; a
+validation **pair** is dropped if either side is background, since correspondence
+between a tile and an empty one is not something the audit can test. The script
+prints the tissue-fraction deciles and the count below several thresholds, so you
+can set it against the real distribution rather than guessing, and it reprints
+the AUROC bar after filtering. `MIN_TISSUE=0` keeps everything.
+
 `EXCLUDE_VAL_CASES=1` keeps the registered cases out of training. They are the
 only tiles that can ever give a paired metric against ground truth (SSIM, PSNR,
 a real per-tile comparison), so if you want them as a held-out test set they must
