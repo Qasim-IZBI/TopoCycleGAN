@@ -88,7 +88,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--input", required=True, help="root holding the subfolders")
     p.add_argument("--output", required=True, help="mirrored output root")
     p.add_argument("--subdirs", nargs="+", default=list(DEFAULT_SUBDIRS),
-                   help="subfolders to process (default: %s)" % " ".join(DEFAULT_SUBDIRS))
+                   metavar="SRC[:DST]",
+                   help="subfolders to process. 'SRC:DST' renames on the way out, "
+                        "which is how a dataset laid out by domain rather than by "
+                        "split is mapped onto the canonical names, e.g. "
+                        "HE/train:trainA IHC/train:trainB (default: %s)"
+                        % " ".join(DEFAULT_SUBDIRS))
     p.add_argument("--tile_size", type=int, default=512,
                    help="crop size taken from the source image")
     p.add_argument("--resize_to", type=int, default=None,
@@ -119,7 +124,9 @@ def main() -> None:
                                              args.resize_to))
 
     total_w = total_s = 0
-    for sub in args.subdirs:
+    for entry in args.subdirs:
+        sub, _, dst = entry.partition(":")
+        dst = dst or sub
         src = os.path.join(args.input, sub)
         if not os.path.isdir(src):
             print("[skip] %s does not exist" % src)
@@ -137,16 +144,17 @@ def main() -> None:
         note = "" if not rem or rem == (0, 0) else "  (dropping %dx%d edge remainder)" % rem
         # Only the first image is probed, so this is an estimate when the source
         # tiles differ in size; each image is still gridded to its own extent.
+        label = sub if dst == sub else "%s -> %s" % (sub, dst)
         print("[%s] %d images, first is %dx%d -> up to %d crops each%s"
-              % (sub, len(paths), w, h, per, note))
+              % (label, len(paths), w, h, per, note))
 
         if args.dry_run:
             total_w += len(paths) * per
             continue
 
-        dst = os.path.join(args.output, sub)
-        os.makedirs(dst, exist_ok=True)
-        fn = partial(_worker, out_dir=dst, tile_size=args.tile_size,
+        out_dir = os.path.join(args.output, dst)
+        os.makedirs(out_dir, exist_ok=True)
+        fn = partial(_worker, out_dir=out_dir, tile_size=args.tile_size,
                      resize_to=resize_to, overlap=args.overlap,
                      tissue_threshold=args.tissue_threshold,
                      white_level=args.white_level, ext=args.ext)
@@ -160,7 +168,7 @@ def main() -> None:
         s_sum = sum(r[1] for r in results)
         total_w += w_sum
         total_s += s_sum
-        print("[%s] wrote %d tiles%s" % (sub, w_sum,
+        print("[%s] wrote %d tiles%s" % (dst, w_sum,
               ", skipped %d below the tissue threshold" % s_sum if s_sum else ""))
 
     verb = "would write" if args.dry_run else "wrote"

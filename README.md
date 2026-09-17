@@ -261,6 +261,34 @@ domain — this is not TopoGAN's distribution matching. TopoGAN's set-level OT l
 Each real domain's diagrams are computed once and shared between that domain's
 cycle and distribution term.
 
+## Datasets with a different layout (BCI)
+
+BCI ships as `HE/{train,test}` and `IHC/{train,test}` — by domain rather than by
+split — so `topo-crop` accepts `SRC:DST` entries that rename on the way out:
+
+```bash
+sbatch slurm/prepare_bci.sh
+```
+
+which runs
+
+```bash
+topo-crop --input BCI_dataset --output BCI_tiles/BCI/TrainValAB \
+    --subdirs HE/train:trainA IHC/train:trainB HE/test:testA IHC/test:testB \
+    --tile_size 512 --resize_to 256
+```
+
+and then carves `valA`/`valB` out of **train**, by source image, so the four
+crops of one patch never straddle the split and the val pair stays registered.
+**BCI's `test` is left untouched** — using it to choose field hyperparameters and
+then reporting final numbers on it would leak.
+
+Afterwards the rest of the pipeline is unchanged:
+
+```bash
+MARKERS=BCI TILES=/work2/bz66izin-TopoCG/BCI_tiles bash slurm/run_pipeline.sh
+```
+
 ## Estimating stain vectors
 
 The vectors in `fields.STAIN_VECTORS` are literature defaults, fitted to nobody's
