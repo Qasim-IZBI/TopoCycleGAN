@@ -36,9 +36,14 @@ def critical_indices(field: np.ndarray, dims=(0, 1)) -> Dict[int, np.ndarray]:
     """Flat pixel indices of the critical cells, per homology dimension.
 
     Returns {dim: array of shape (n_points, 2)} holding (birth_idx, death_idx)
-    into `field.ravel()`. Essential features (those that never die) are dropped:
-    their death is +inf, which has no gradient and no meaning in a birth-only
-    distance.
+    into the FORTRAN-order flattening of `field` -- gudhi flattens the
+    top-dimensional cells column-major, so these index `field.ravel(order="F")`,
+    NOT `field.ravel()`. On a square field a C-order gather silently reads the
+    transposed pixel instead of erroring, so this is checked by a test that
+    compares the gathered values against gudhi's own persistence intervals.
+
+    Essential features (those that never die) are dropped: their death is +inf,
+    which has no gradient and no meaning in a birth-only distance.
     """
     gudhi = _gudhi()
     field = np.ascontiguousarray(field, dtype=np.float64)
@@ -61,6 +66,8 @@ def persistence_diagram(field: torch.Tensor, dims=(0, 1)) -> Dict[int, torch.Ten
     Args:
         field: (H, W) tensor. Sublevel-set filtration, so *low* values are the
                foreground -- invert beforehand if strong stain is high in yours.
+               Birth is always <= death; a pair where that fails means the
+               critical indices were gathered in the wrong memory order.
 
     Returns {dim: (n_points, 2) tensor of [birth, death]} that carries gradient
     back to the critical pixels of `field`.
@@ -69,7 +76,10 @@ def persistence_diagram(field: torch.Tensor, dims=(0, 1)) -> Dict[int, torch.Ten
         raise ValueError("expected a single (H, W) field, got shape %s" % (tuple(field.shape),))
 
     idx = critical_indices(field.detach().cpu().numpy(), dims)
-    flat = field.reshape(-1)
+    # Transposing then flattening C-order is exactly the Fortran-order
+    # flattening gudhi indexed into. reshape copies here, and autograd routes
+    # the gradient back through the copy to the right pixels.
+    flat = field.t().reshape(-1)
 
     out = {}
     for dim, pairs in idx.items():

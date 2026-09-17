@@ -1328,3 +1328,63 @@ def test_validate_fields_json_has_one_row_per_combination(tmp_path):
     # be 0 on four noise tiles that separate perfectly; the audit tests against
     # the null SE instead, which cannot.
     assert all(r["auroc_se"] >= 0 for r in payload["rows"])
+
+
+# --------------------------------------------------------------------------
+# Regression: gudhi indexes its critical cells in FORTRAN order
+# --------------------------------------------------------------------------
+def _gudhi_intervals(field, dim):
+    import gudhi
+    cc = gudhi.CubicalComplex(top_dimensional_cells=field)
+    cc.compute_persistence(homology_coeff_field=2)
+    ref = cc.persistence_intervals_in_dimension(dim)
+    return ref[np.isfinite(ref[:, 1])]
+
+
+def _lex(a):
+    return a[np.lexsort((a[:, 1], a[:, 0]))]
+
+
+@pytest.mark.parametrize("shape", [(5, 7), (13, 29), (32, 32), (64, 64)])
+def test_diagram_values_match_gudhis_own_intervals(shape):
+    """The values we gather must BE the persistence diagram, not merely look
+    like one. gudhi's cofaces_of_persistence_pairs returns indices into the
+    column-major flattening; gathering them row-major reads the transposed
+    pixel, which on a square field is silently wrong rather than an error."""
+    from topo_i2i.persistence import persistence_diagram
+    field = np.random.default_rng(0).random(shape)
+    ours = persistence_diagram(torch.from_numpy(field).double(), (0, 1))
+    for dim in (0, 1):
+        got, ref = ours[dim].numpy(), _gudhi_intervals(field, dim)
+        assert len(got) == len(ref), "dim %d: %d points vs %d" % (dim, len(got), len(ref))
+        assert np.allclose(_lex(got), _lex(ref)), "dim %d values differ" % dim
+
+
+@pytest.mark.parametrize("shape", [(17, 41), (48, 48)])
+def test_birth_never_exceeds_death(shape):
+    """In a sublevel filtration a feature cannot die before it is born; when it
+    appears to, the critical indices were read in the wrong memory order."""
+    from topo_i2i.persistence import persistence_diagram
+    field = torch.from_numpy(np.random.default_rng(1).random(shape)).double()
+    d = persistence_diagram(field, (0, 1))
+    for dim in (0, 1):
+        b, death = d[dim][:, 0], d[dim][:, 1]
+        assert torch.all(death >= b), "dim %d has %d inverted pairs" % (
+            dim, int((death < b).sum()))
+
+
+def test_gradient_lands_on_the_pixel_that_set_the_value():
+    """Non-square on purpose: a transposed gather would move the gradient to a
+    different pixel, and on a square field that pixel still exists."""
+    from topo_i2i.persistence import persistence_diagram
+    field = torch.from_numpy(np.random.default_rng(2).random((9, 23))).double()
+    field.requires_grad_(True)
+    d = persistence_diagram(field, (0,))
+    b = d[0][:, 0]
+    b.sum().backward()
+    touched = field.grad.nonzero()
+    # every pixel the gradient reached must carry one of the birth values
+    vals = field.detach()[touched[:, 0], touched[:, 1]]
+    assert len(touched) > 0
+    for v in vals:
+        assert torch.isclose(b.detach(), v).any(), "gradient on a non-critical pixel"
