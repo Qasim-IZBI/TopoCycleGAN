@@ -59,7 +59,7 @@ dep=""
 if [ -n "$missing" ]; then
     echo "estimating stain vectors for:${missing}"
     jid=$(sbatch --parsable \
-                 --export="ALL,MARKERS=${missing# },STAINS_DIR=${STAINS_DIR},TILES=${TILES}" \
+                 --export="ALL,MARKERS=${missing# },STAINS_DIR=${STAINS_DIR},TILES=${TILES},TILES_BCI=${TILES_BCI}" \
                  slurm/estimate_stains.sh)
     echo "  estimation job: ${jid}"
     dep="--dependency=afterok:${jid}"

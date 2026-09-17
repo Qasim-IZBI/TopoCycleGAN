@@ -51,7 +51,14 @@ TILES_BCI=${TILES_BCI:-/work2/bz66izin-TopoCG/BCI_tiles}
 STAINS_DIR=${STAINS_DIR:-/work2/bz66izin-TopoCG/field_validation_estimated}
 AUDIT=${AUDIT:-/work2/bz66izin-TopoCG/field_audit}
 
-LIMIT=${LIMIT:-512}            # tiles per slice; the run uses 2 x LIMIT in total
+LIMIT=${LIMIT:-512}            # tiles per slice; the run uses 2 x LIMIT in total.
+                               # Set it to half the matched tiles so both slices
+                               # together use all of them: under the strict
+                               # control a tile is dropped unless a groupmate
+                               # lands in the SAME slice, so a small LIMIT breaks
+                               # up groups and costs more power than it saves
+                               # time (1560 BCI tiles: LIMIT=512 leaves 355
+                               # usable per slice, LIMIT=780 leaves 682)
 SEED=${SEED:-0}                # MUST match between screen and confirm, or the
                                # two slices stop being disjoint
 SHUFFLES=${SHUFFLES:-5}
