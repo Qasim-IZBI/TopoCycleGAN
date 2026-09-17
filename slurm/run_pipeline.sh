@@ -8,6 +8,9 @@
 #   MARKERS="ER Ki67" bash run_pipeline.sh
 #   SKIP_ESTIMATE=1 bash run_pipeline.sh   # vectors already estimated
 #
+#   # train every marker on what the audit chose for it:
+#   AUDIT_DIR=/work2/bz66izin-TopoCG/field_audit_mist bash run_pipeline.sh
+#
 # The training arrays are submitted with --dependency=afterok on the estimation
 # job, so they queue immediately but only start once the vectors are written.
 
@@ -58,7 +61,9 @@ for m in $MARKERS; do
         echo "[skip] ${m}: ${script} not found"
         continue
     fi
-    jid=$(sbatch --parsable $dep --export="ALL,STAINS_DIR=${STAINS_DIR}" "$script")
+    jid=$(sbatch --parsable $dep \
+                 --export="ALL,STAINS_DIR=${STAINS_DIR}${AUDIT_DIR:+,AUDIT_DIR=${AUDIT_DIR}}" \
+                 "$script")
     echo "training array for ${m}: ${jid}  (13 cells, task 0 is the CycleGAN baseline)"
 done
 
