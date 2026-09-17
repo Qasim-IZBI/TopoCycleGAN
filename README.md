@@ -458,6 +458,69 @@ the two directories share none.
 Diagrams are computed once per image per spec and reused across combinations, so
 adding specs is cheap relative to the first one.
 
+## The audit: one command, one recommendation
+
+Reading that table by hand invites the mistake it warns about — sweeping 324
+combinations and quoting the best AUROC quotes the maximum of 324 correlated
+noisy statistics, which sits above 0.5 even when nothing is there. `run_audit.sh`
+runs the whole thing and applies a rule fixed in advance instead:
+
+```bash
+bash slurm/run_audit.sh                                   # 4 MIST markers
+MARKERS=BCI bash slurm/run_audit.sh                       # one dataset
+MARKERS="Ki67 ER HER2 PR BCI" bash slurm/run_audit.sh     # everything
+```
+
+It submits stain estimation (for markers that need it), then an array of four
+cells per marker, then one decision job — all in the background under SLURM.
+Come back to `${AUDIT}/RECOMMENDATION.txt`.
+
+The four cells per marker are `{estimated, literature} vectors` ×
+`{strict, unstratified} control`, and the three stages are:
+
+| stage | what runs | what it may decide |
+| --- | --- | --- |
+| screen | the full field grid on slice 1, strict control | the top 5 candidates per vector source — reported as nothing |
+| confirm | exactly those candidates on slice 2, disjoint by construction | the AUROCs that may be quoted |
+| decide | `topo-audit decide` | supported / not, and the training fields |
+
+A candidate is **supported** only if its slice-2 AUROC clears 0.5 one-sided at
+α=0.05, Bonferroni-corrected over every candidate confirmed for that marker. The
+standard error is Hanley–McNeil *under the null*, which depends only on sample
+size — the error estimated at the observed AUROC shrinks as that value rises and
+reaches exactly 0 at a perfect 1.0, which would certify a fluke.
+
+The unstratified arm never decides anything. It runs so the report can print
+`inflation = unstratified − strict`: how much of the apparent signal was the
+model recognising which slide a tile came from.
+
+Two outcomes:
+
+- **ph_trans supported** — the best *confirmed* setting (never the screening
+  leader, which is the inflated one) becomes the training fields.
+- **ph_cyc only** — nothing survived the held-out slice, so there is no evidence
+  topology transfers between these domains at tile scale. `ph_cyc` compares an
+  image with its own reconstruction in one field, needs no cross-domain
+  correspondence, and stays valid exactly where `ph_trans` does not.
+
+A ph_cyc-only verdict is a prediction, not a veto. The grid still contains the
+`ph_trans` cells, so training *tests* the audit rather than assuming it — the
+`_sweep_common.sh` log says so when it is running such a cell.
+
+The decision is machine-readable. `recommended_<marker>.env` holds the chosen
+fields, and training consumes it directly:
+
+```bash
+AUDIT_DIR=/work2/bz66izin-TopoCG/field_audit sbatch slurm/sweep_ki67.sh
+```
+
+The env file assigns with `${VAR:-...}`, so it fills in only what the submitter
+left unset — an explicit `--export=ALL,FIELD_A=...` still wins.
+
+The rule lives in `topo_i2i/audit.py` as named constants (`TOP_K`, `ALPHA`), not
+as CLI flags, because tuning them after seeing results is the thing the protocol
+exists to prevent.
+
 ## Validation inference
 
 ```bash

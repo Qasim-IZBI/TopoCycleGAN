@@ -1182,3 +1182,149 @@ def test_saved_field_array_reproduces_the_diagram(tmp_path):
     d = persistence_diagram(torch.from_numpy(arr), (0, 1))
     rows = (out/"B_diagram.csv").read_text().strip().split("\n")[1:]
     assert len(rows) == d[0].shape[0] + d[1].shape[0]
+
+
+# --------------------------------------------------------------------------
+# topo-audit: the pre-registered field-selection rule
+# --------------------------------------------------------------------------
+def _row(fa="stain1/stain2", fb="stain1+stain2", ds=2, dims="0,1", proj="birth",
+         auroc=0.6, se=0.02):
+    return {"field_A": fa, "field_B": fb, "downsample": ds, "dims": dims,
+            "projection": proj, "true": 1.0, "shuffled": 1.1, "ratio": 1.1,
+            "auroc": auroc, "auroc_se": se}
+
+
+def _write_cell(d, name, rows, **meta):
+    import json, os
+    payload = {"rows": rows, "n_tiles": 512, "n_pairs": 512,
+               "combinations": len(rows), "within_slide": True,
+               "slide_regex": r"_r\d+c\d+$", "groups": 128, "stains": "/s.json",
+               "limit": 512, "offset": 0, "seed": 0, "sample": "random",
+               "shuffles": 5, "image_size": 256, "field_combine": "sum",
+               "invert": True, "dataA": "/a", "dataB": "/b"}
+    payload.update(meta)
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, name), "w") as fh:
+        json.dump(payload, fh)
+
+
+def test_bonferroni_bar_rises_with_more_candidates():
+    from topo_i2i.audit import z_threshold
+    assert z_threshold(1) < z_threshold(5) < z_threshold(50)
+
+
+def test_a_clear_signal_is_supported_and_noise_is_not():
+    from topo_i2i.audit import supported
+    assert supported(0.60, 512, 5)           # far above chance on 512 tiles
+    assert not supported(0.52, 512, 5)       # inside the noise band
+
+
+def test_a_perfect_auroc_on_a_tiny_sample_is_not_certified():
+    """The SE at the observed value collapses to 0 at 1.0; the null SE does not."""
+    from topo_i2i.audit import null_se, supported
+    assert null_se(4) > 0
+    assert not supported(1.0, 4, 5)
+    assert supported(1.0, 512, 5)
+
+
+def test_the_bar_is_the_band_the_reports_quote():
+    """1.96 * null SE at n=1560 is the +/-0.020 the BCI report printed."""
+    from topo_i2i.audit import null_se
+    assert 1.96 * null_se(1560) == pytest.approx(0.020, abs=0.001)
+
+
+def test_screening_ties_break_toward_the_cheaper_setting():
+    from topo_i2i.audit import top_candidates
+    screen = {"rows": [_row(ds=1, auroc=0.6), _row(ds=4, auroc=0.6)]}
+    assert top_candidates(screen, 1)[0]["downsample"] == 4
+
+
+def test_verdict_is_ph_cyc_only_when_nothing_survives(tmp_path):
+    from topo_i2i.audit import decide_marker
+    d = tmp_path / "BCI"
+    _write_cell(str(d), "screen_estimated_strict.json", [_row(auroc=0.547)])
+    _write_cell(str(d), "confirm_estimated_00.json", [_row(auroc=0.512, se=0.02)])
+    out = decide_marker(str(d), ["estimated", "fixed"])
+    assert out["verdict"] == "ph_cyc_only"
+
+
+def test_verdict_is_supported_when_a_candidate_clears_the_bar(tmp_path):
+    from topo_i2i.audit import decide_marker
+    d = tmp_path / "Ki67"
+    _write_cell(str(d), "screen_estimated_strict.json", [_row(auroc=0.60)])
+    _write_cell(str(d), "confirm_estimated_00.json", [_row(auroc=0.60, se=0.01)])
+    out = decide_marker(str(d), ["estimated", "fixed"])
+    assert out["verdict"] == "ph_trans_supported"
+    assert out["recommended"]["setting"][0] == "stain1/stain2"
+
+
+def test_the_winner_is_chosen_on_the_held_out_slice_not_the_screen(tmp_path):
+    """The whole point: the screen leader is the number selection inflated."""
+    from topo_i2i.audit import decide_marker
+    d = tmp_path / "ER"
+    # Candidate 0 screened best; candidate 1 confirms best. 1 must win.
+    _write_cell(str(d), "screen_estimated_strict.json",
+                [_row(proj="birth", auroc=0.80), _row(proj="lifetime", auroc=0.70)])
+    _write_cell(str(d), "confirm_estimated_00.json",
+                [_row(proj="birth", auroc=0.58, se=0.01)])
+    _write_cell(str(d), "confirm_estimated_01.json",
+                [_row(proj="lifetime", auroc=0.64, se=0.01)])
+    out = decide_marker(str(d), ["estimated"])
+    assert out["verdict"] == "ph_trans_supported"
+    assert out["recommended"]["setting"][4] == "lifetime"
+
+
+def test_specimen_recognition_delta_is_reported(tmp_path):
+    from topo_i2i.audit import decide_marker
+    d = tmp_path / "BCI"
+    _write_cell(str(d), "screen_estimated_strict.json", [_row(auroc=0.512)])
+    _write_cell(str(d), "screen_estimated_unstratified.json", [_row(auroc=0.702)],
+                within_slide=False, slide_regex=None, groups=None)
+    _write_cell(str(d), "confirm_estimated_00.json", [_row(auroc=0.512, se=0.02)])
+    out = decide_marker(str(d), ["estimated"])
+    assert out["arms"]["estimated"]["specimen_recognition_delta"] == pytest.approx(0.19)
+
+
+def test_recommendation_env_defers_to_an_explicit_override(tmp_path):
+    """Sourcing must fill in blanks, never overwrite what the submitter set."""
+    import subprocess
+    from topo_i2i.audit import decide_marker, env_lines
+    d = tmp_path / "Ki67"
+    _write_cell(str(d), "screen_estimated_strict.json", [_row(auroc=0.60)])
+    _write_cell(str(d), "confirm_estimated_00.json", [_row(auroc=0.60, se=0.01)])
+    env = tmp_path / "rec.env"
+    env.write_text("\n".join(env_lines(decide_marker(str(d), ["estimated"]))) + "\n")
+    script = 'FIELD_A=mine; . "%s"; echo "$FIELD_A $FIELD_B $TOPO_PROJECTION"' % env
+    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    assert out.stdout.split() == ["mine", "stain1+stain2", "birth"]
+
+
+def test_validate_fields_json_has_one_row_per_combination(tmp_path):
+    import json, sys
+    import numpy as np
+    from PIL import Image
+    from topo_i2i.validate_fields import build_parser, main
+    a, b = tmp_path / "A", tmp_path / "B"
+    for d in (a, b):
+        d.mkdir()
+        for i in range(4):
+            arr = (np.random.default_rng(i).random((64, 64, 3)) * 255).astype("uint8")
+            Image.fromarray(arr).save(d / ("s0_r0c%d.png" % i))
+    out = tmp_path / "j.json"
+    argv = sys.argv
+    sys.argv = ["topo-validate-fields", "--dataA", str(a), "--dataB", str(b),
+                "--field-A", "gray", "--field-B", "gray", "--downsample", "1", "2",
+                "--dims-set", "0", "--topo-projection", "birth", "lifetime",
+                "--image-size", "32", "--limit", "4", "--shuffles", "1",
+                "--json", str(out)]
+    try:
+        main()
+    finally:
+        sys.argv = argv
+    payload = json.loads(out.read_text())
+    assert len(payload["rows"]) == 4 == payload["combinations"]
+    assert all(0.0 <= r["auroc"] <= 1.0 for r in payload["rows"])
+    # The per-row SE is estimated at the observed AUROC, so it may legitimately
+    # be 0 on four noise tiles that separate perfectly; the audit tests against
+    # the null SE instead, which cannot.
+    assert all(r["auroc_se"] >= 0 for r in payload["rows"])

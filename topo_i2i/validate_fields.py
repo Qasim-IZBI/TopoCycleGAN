@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import itertools
+import json
 import os
 import re
 
@@ -227,6 +228,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--shuffles", type=int, default=5,
                    help="random permutations to average the shuffled baseline over")
     p.add_argument("--no-invert", action="store_true")
+    p.add_argument("--json", default=None, metavar="PATH",
+                   help="also write the table and the settings that produced it "
+                        "as JSON, which is what topo-audit reads")
     p.add_argument("--sample", choices=("random", "head"), default="random",
                    help="'random' permutes the tile list by --seed before "
                         "slicing, so a --limit sample spans every slide; 'head' "
@@ -347,6 +351,31 @@ def main() -> None:
     print("AUROC 0.5 means the distance says nothing about which tiles belong together;")
     print("a field pair that cannot separate true from random here will not teach")
     print("ph_trans anything during training.")
+
+    if args.json:
+        # One row per combination, each carrying its own standard error, plus
+        # every setting needed to reproduce it. topo-audit consumes this; the
+        # printed table above is for humans and is not parsed by anything.
+        se_of = lambda a: auroc_se(a, len(index), len(index))
+        payload = {
+            "rows": [{"field_A": r[0], "field_B": r[1], "downsample": r[2],
+                      "dims": r[3], "projection": r[4], "true": r[5],
+                      "shuffled": r[6], "ratio": r[7], "auroc": r[8],
+                      "auroc_se": se_of(r[8])} for r in rows],
+            "n_tiles": len(index), "n_pairs": n, "combinations": len(combos),
+            "within_slide": bool(args.shuffle_within_slide),
+            "slide_regex": args.slide_regex if args.shuffle_within_slide else None,
+            "groups": (len({slide_of(a, args.slide_regex) for a, _ in pairs})
+                       if args.shuffle_within_slide else None),
+            "stains": args.stains, "limit": args.limit, "offset": args.offset,
+            "seed": args.seed, "sample": args.sample, "shuffles": args.shuffles,
+            "image_size": args.image_size, "field_combine": args.field_combine,
+            "invert": invert, "dataA": args.dataA, "dataB": args.dataB,
+        }
+        os.makedirs(os.path.dirname(os.path.abspath(args.json)), exist_ok=True)
+        with open(args.json, "w") as fh:
+            json.dump(payload, fh, indent=2)
+        print("\nwrote %s" % args.json)
 
 
 if __name__ == "__main__":

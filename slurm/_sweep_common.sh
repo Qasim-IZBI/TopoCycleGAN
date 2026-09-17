@@ -50,6 +50,24 @@ source "${REPO:-${SLURM_SUBMIT_DIR:-$PWD}}/slurm/_grid.sh"
 grid_select "$TASK_ID"
 
 # -----------------------------
+# Optional: the pre-registered field selection from slurm/run_audit.sh. Set
+# AUDIT_DIR to train on what the audit chose instead of the defaults below; the
+# file only fills in variables the submitter left unset, so an explicit
+# --export=ALL,FIELD_A=... still takes precedence over it.
+# -----------------------------
+if [ -n "${AUDIT_DIR:-}" ]; then
+    audit_env="${AUDIT_DIR}/recommended_${MARKER}.env"
+    if [ ! -f "$audit_env" ]; then
+        echo "ERROR: AUDIT_DIR is set but ${audit_env} does not exist" >&2
+        echo "Run 'bash slurm/run_audit.sh' first, or unset AUDIT_DIR" >&2
+        exit 1
+    fi
+    echo "field selection from the audit: ${audit_env}"
+    sed 's/^/  /' "$audit_env"
+    source "$audit_env"
+fi
+
+# -----------------------------
 # Knobs: override at submit time with --export=ALL,NAME=value
 # -----------------------------
 STEPS=${STEPS:-400000}              # 8 epochs of ~50k tiles; fits one 48h slot
@@ -86,6 +104,14 @@ if [ -n "$STAINS" ] && [ ! -f "$STAINS" ]; then
     exit 1
 fi
 echo "LAMBDA_PH_CYC=${PH_CYC}  LAMBDA_PH_TRANS=${PH_TRANS}  LAMBDA_TOPO=${LAMBDA_TOPO}"
+# The audit's verdict does not gate the grid: a cell it predicts will not help
+# is how that prediction gets tested. Say so in the log rather than silently
+# zeroing the term.
+if [ "${PH_TRANS_SUPPORTED:-1}" = "0" ] && [ "${PH_TRANS}" != "0" ]; then
+    echo "NOTE: the audit found no evidence that topology transfers between these"
+    echo "      two domains at tile scale, so ph_trans is expected not to help"
+    echo "      here. This cell is running it anyway, as the test of that."
+fi
 
 # -----------------------------
 # Paths
