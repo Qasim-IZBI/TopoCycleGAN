@@ -296,10 +296,16 @@ MARKERS=BCI TILES=/work2/bz66izin-TopoCG/BCI_tiles bash run_pipeline.sh
 
 ## Datasets grouped by case (VS)
 
-The VS H&E / Sirius Red tiles arrive one directory per case —
-`QP_HE/tiles/trainA/<case>/images/<id>.tif` — rather than as flat directories.
-`prepare_vs.sh` presents them in the expected layout as a tree of **symlinks**,
-named `<case>_<id>.tif`:
+VS has two sets that play different roles, and `prepare_vs.sh` keeps them apart:
+
+| set | source | cases | role |
+| --- | --- | --- | --- |
+| train | `QP_HE/tiles/trainA`, `QP_SR/tiles/trainB` | 35, **unregistered** | CycleGAN is unpaired, so every tile is linked; no id matching needed |
+| val | `temp/tiles/testA`, `temp/tiles/testB` | 5, **registered** | the audit rests on real correspondence, so only these become `valA`/`valB` |
+
+Both arrive one directory per case — `<case>/images/<id>.tif` — rather than as
+flat directories. The script presents them in the expected layout as a tree of
+**symlinks**, named `<case>_<id>.tif`:
 
 ```bash
 mkdir -p logs_topo
@@ -314,10 +320,20 @@ weaker than the adjacent-quadrant control MIST and BCI get from their
 theirs. If `tiles_metadata.csv` carries tile coordinates, a name encoding those
 would allow the stricter grouping; the script prints the header so you can see.
 
-It also checks the thing everything else depends on — whether a tile id names
-the same tissue in both domains — and refuses to finish if no id is shared,
-because `matched_pairs` would otherwise fall back silently to sorted order and
-every AUROC after that would be measuring nothing.
+On the validation set it checks the thing everything else depends on — whether a
+tile id names the same tissue in both domains — and refuses to finish if no id is
+shared, because `matched_pairs` would otherwise fall back silently to sorted
+order and every AUROC after that would be measuring nothing. Only ids present in
+both domains are linked, so `valA[i]` really does pair with `valB[i]`.
+
+It also prints the AUROC a candidate will have to reach, since with only five
+registered cases the bar is much higher than MIST's or BCI's — read a weak
+verdict there as low power, not as absent signal.
+
+`EXCLUDE_VAL_CASES=1` keeps the registered cases out of training. They are the
+only tiles that can ever give a paired metric against ground truth (SSIM, PSNR,
+a real per-tile comparison), so if you want them as a held-out test set they must
+not be trained on.
 
 Then the audit, with VS's own tile root:
 
