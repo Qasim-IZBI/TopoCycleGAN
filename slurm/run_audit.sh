@@ -4,9 +4,9 @@
 #
 # Run this on the login node; it is a submitter, not a job.
 #
-#   bash slurm/run_audit.sh                                  # 4 MIST markers
-#   MARKERS=BCI TILES_BCI=/work2/bz66izin-TopoCG/BCI_tiles bash slurm/run_audit.sh
-#   MARKERS="Ki67 ER HER2 PR BCI" bash slurm/run_audit.sh    # everything
+#   bash run_audit.sh                                  # 4 MIST markers
+#   MARKERS=BCI TILES_BCI=/work2/bz66izin-TopoCG/BCI_tiles bash run_audit.sh
+#   MARKERS="Ki67 ER HER2 PR BCI" bash run_audit.sh    # everything
 #
 # It submits, in order:
 #   1. stain estimation, for any marker that has no vectors yet
@@ -23,10 +23,10 @@
 # one failed cell still yields a report over the cells that did finish -- the
 # report names what is missing.
 
-set -euo pipefail
+set -eo pipefail
 
 if [ -n "${SLURM_JOB_ID:-}" ]; then
-    echo "ERROR: run this with 'bash slurm/run_audit.sh', not 'sbatch'." >&2
+    echo "ERROR: run this with 'bash run_audit.sh', not 'sbatch'." >&2
     echo "It is a submitter script -- it submits the jobs for you." >&2
     exit 1
 fi
@@ -38,6 +38,10 @@ TILES=${TILES:-/work2/bz66izin-TopoCG/MIST_tiles}
 TILES_BCI=${TILES_BCI:-/work2/bz66izin-TopoCG/BCI_tiles}
 LIMIT=${LIMIT:-512}
 SEED=${SEED:-0}
+
+# These run under bash, not sbatch, so BASH_SOURCE really does point at this
+# file and the siblings can be found from any working directory.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 mkdir -p logs_topo "$AUDIT"
 
@@ -60,7 +64,7 @@ if [ -n "$missing" ]; then
     echo "estimating stain vectors for:${missing}"
     jid=$(sbatch --parsable \
                  --export="ALL,MARKERS=${missing# },STAINS_DIR=${STAINS_DIR},TILES=${TILES},TILES_BCI=${TILES_BCI}" \
-                 slurm/estimate_stains.sh)
+                 "$HERE/estimate_stains.sh")
     echo "  estimation job: ${jid}"
     dep="--dependency=afterok:${jid}"
 else
@@ -68,12 +72,12 @@ else
 fi
 
 array_jid=$(sbatch --parsable $dep --array=0-${last} \
-                   --export="ALL,${common}" slurm/audit_fields.sh)
+                   --export="ALL,${common}" "$HERE/audit_fields.sh")
 echo "audit array: ${array_jid}  ($(( last + 1 )) cells: ${n_markers} markers x 4)"
 
 decide_jid=$(sbatch --parsable --dependency=afterany:${array_jid} \
                     --export="ALL,AUDIT=${AUDIT},MARKERS=${MARKERS}" \
-                    slurm/audit_decide.sh)
+                    "$HERE/audit_decide.sh")
 echo "decision job: ${decide_jid}"
 
 echo
@@ -83,5 +87,5 @@ echo "  cat ${AUDIT}/RECOMMENDATION.txt"
 echo "then train with what it chose:"
 for m in $MARKERS; do
     lower=$(echo "$m" | tr 'A-Z' 'a-z')
-    echo "  AUDIT_DIR=${AUDIT} sbatch slurm/sweep_${lower}.sh"
+    echo "  AUDIT_DIR=${AUDIT} sbatch sweep_${lower}.sh"
 done

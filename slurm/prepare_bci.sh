@@ -7,6 +7,7 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=32G
 #SBATCH --partition=clara
+#SBATCH --exclude=clara[02,04-08]
 #SBATCH --ntasks=1
 # No --gres: cropping is CPU-only.
 
@@ -20,8 +21,8 @@
 # The holdout is by SOURCE IMAGE, so the four crops of one patch never straddle
 # the split.
 #
-#   sbatch slurm/prepare_bci.sh
-#   sbatch --export=ALL,VAL_FRAC=0.15 slurm/prepare_bci.sh
+#   sbatch prepare_bci.sh
+#   sbatch --export=ALL,VAL_FRAC=0.15 prepare_bci.sh
 
 set -eo pipefail
 
@@ -29,9 +30,7 @@ if command -v module >/dev/null 2>&1; then
     module purge
     module load Anaconda3/2025.06-1
     eval "$(conda shell.bash hook)"
-    set +u
     conda activate "${CONDA_ENV:-topocg}"
-    set -u
 fi
 
 SRC=${SRC:-/work2/bz66izin-TopoCG/BIC/BCI_dataset}
@@ -88,5 +87,5 @@ print("  held out %d of %d source images (%d tiles moved)" % (len(hold), len(sha
 PY
 
 echo
-echo "next:  bash slurm/run_pipeline.sh  with"
+echo "next:  bash run_pipeline.sh  with"
 echo "       MARKERS=BCI TILES=$(dirname "$(dirname "$OUT")")"

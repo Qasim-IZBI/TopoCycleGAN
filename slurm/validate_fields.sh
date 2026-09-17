@@ -7,6 +7,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=16G
 #SBATCH --partition=clara
+#SBATCH --exclude=clara[02,04-08]
 #SBATCH --ntasks=1
 # No --gres: persistence is CPU-only, so this needs no GPU allocation.
 
@@ -15,9 +16,9 @@
 # GPU time to a training sweep -- a combination that cannot separate true pairs
 # from random ones here will not teach ph_trans anything.
 #
-#   sbatch slurm/validate_fields.sh                            # all four markers
-#   sbatch --export=ALL,MARKERS=ER slurm/validate_fields.sh    # just ER
-#   MARKERS=ER LIMIT=32 bash slurm/validate_fields.sh          # locally, quick
+#   sbatch validate_fields.sh                            # all four markers
+#   sbatch --export=ALL,MARKERS=ER validate_fields.sh    # just ER
+#   MARKERS=ER LIMIT=32 bash validate_fields.sh          # locally, quick
 #
 # Reports land in ${OUT}/fields_<marker>.txt as well as the job log.
 
@@ -27,9 +28,7 @@ if command -v module >/dev/null 2>&1; then
     module purge
     module load Anaconda3/2025.06-1
     eval "$(conda shell.bash hook)"
-    set +u
     conda activate "${CONDA_ENV:-topocg}"
-    set -u
 fi
 
 MARKERS=${MARKERS:-"Ki67 ER HER2 PR"}
@@ -105,4 +104,4 @@ echo "reports written under ${OUT}/"
 echo "Two-stage use: screen the whole grid here, then re-score just the leading"
 echo "rows on a disjoint slice, e.g."
 echo "  OFFSET=${LIMIT} LIMIT=512 SEED=${SEED} FIELDS_A=<winner> FIELDS_B=<winner> \\"
-echo "    DOWNSAMPLE=<n> PROJECTIONS=<p> DIMS_SETS=<d> bash slurm/validate_fields.sh"
+echo "    DOWNSAMPLE=<n> PROJECTIONS=<p> DIMS_SETS=<d> bash validate_fields.sh"

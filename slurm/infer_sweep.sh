@@ -7,19 +7,20 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
 #SBATCH --partition=clara
+#SBATCH --exclude=clara[02,04-08]
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
-#SBATCH --array=0-12  # 13 cells; see slurm/_grid.sh for the grid
+#SBATCH --array=0-12  # 13 cells; see _grid.sh for the grid
 
 # Validation inference, one array task per sweep cell -- task N infers the model
 # that training task N produced, because both resolve the cell through
-# slurm/_grid.sh.
+# _grid.sh.
 #
 # Run once before the first submit:  mkdir -p logs_topo
 #
-#   sbatch --export=ALL,MARKER=ER slurm/infer_sweep.sh                  # all 38
-#   sbatch --export=ALL,MARKER=ER --array=0-18 slurm/infer_sweep.sh     # lambda_cycle=10 only
-#   sbatch --export=ALL,MARKER=ER,LIMIT=8 --array=13 slurm/infer_sweep.sh
+#   sbatch --export=ALL,MARKER=ER infer_sweep.sh                  # all 38
+#   sbatch --export=ALL,MARKER=ER --array=0-18 infer_sweep.sh     # lambda_cycle=10 only
+#   sbatch --export=ALL,MARKER=ER,LIMIT=8 --array=13 infer_sweep.sh
 #
 # Submit from the repository root so SLURM_SUBMIT_DIR locates _grid.sh, or
 # export REPO=/path/to/TopoCycleGAN.
@@ -29,17 +30,20 @@ set -eo pipefail
 : "${MARKER:?set MARKER, e.g. --export=ALL,MARKER=ER}"
 TASK_ID=${SLURM_ARRAY_TASK_ID:?submit with sbatch -- there is no array index}
 
-REPO=${REPO:-${SLURM_SUBMIT_DIR:-$PWD}}
-source "${REPO}/slurm/_grid.sh"
+# Sibling scripts live next to this one. SLURM runs a batch script from a copy
+# in its spool directory, so BASH_SOURCE cannot locate them -- the directory
+# sbatch was called from can. The fallback keeps a submit from the repo root
+# working too.
+SLURM_DIR=${REPO:-${SLURM_SUBMIT_DIR:-$PWD}}
+[ -f "${SLURM_DIR}/_grid.sh" ] || SLURM_DIR="${SLURM_DIR}/slurm"
+source "${SLURM_DIR}/_grid.sh"
 grid_select "$TASK_ID"
 
 if command -v module >/dev/null 2>&1; then
     module purge
     module load Anaconda3/2025.06-1
     eval "$(conda shell.bash hook)"
-    set +u
     conda activate "${CONDA_ENV:-topocg}"
-    set -u
 fi
 
 MARKER_LC=$(echo "$MARKER" | tr 'A-Z' 'a-z')

@@ -7,6 +7,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=16G
 #SBATCH --partition=clara
+#SBATCH --exclude=clara[02,04-08]
 #SBATCH --ntasks=1
 # No --gres: Macenko is CPU-only.
 
@@ -18,8 +19,8 @@
 # Already-present JSONs are left alone, so this is safe to re-run and is a no-op
 # if field_validation_estimated has already produced them.
 #
-#   sbatch slurm/estimate_stains.sh
-#   sbatch --export=ALL,MARKERS=ER,FORCE=1 slurm/estimate_stains.sh
+#   sbatch estimate_stains.sh
+#   sbatch --export=ALL,MARKERS=ER,FORCE=1 estimate_stains.sh
 
 set -eo pipefail
 
@@ -27,9 +28,7 @@ if command -v module >/dev/null 2>&1; then
     module purge
     module load Anaconda3/2025.06-1
     eval "$(conda shell.bash hook)"
-    set +u
     conda activate "${CONDA_ENV:-topocg}"
-    set -u
 fi
 
 MARKERS=${MARKERS:-"Ki67 ER HER2 PR"}

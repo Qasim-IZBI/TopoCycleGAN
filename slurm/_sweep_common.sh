@@ -13,11 +13,7 @@ module purge
 module load Anaconda3/2025.06-1
 
 eval "$(conda shell.bash hook)"
-# conda's activate scripts reference unset variables, so -u has to come off
-# across the activation and back on for the rest of the script.
-set +u
 conda activate "${CONDA_ENV:-topocg}"
-set -u
 
 echo "Host: $(hostname)"
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-none}"
@@ -46,11 +42,13 @@ run_cmd() {
 # Grid -- defined once in _grid.sh so training and inference agree on the cells
 # -----------------------------
 TASK_ID=${SLURM_ARRAY_TASK_ID:?submit with sbatch -- there is no array index to sweep over}
-source "${REPO:-${SLURM_SUBMIT_DIR:-$PWD}}/slurm/_grid.sh"
+SLURM_DIR=${SLURM_DIR:-${REPO:-${SLURM_SUBMIT_DIR:-$PWD}}}
+[ -f "${SLURM_DIR}/_grid.sh" ] || SLURM_DIR="${SLURM_DIR}/slurm"
+source "${SLURM_DIR}/_grid.sh"
 grid_select "$TASK_ID"
 
 # -----------------------------
-# Optional: the pre-registered field selection from slurm/run_audit.sh. Set
+# Optional: the pre-registered field selection from run_audit.sh. Set
 # AUDIT_DIR to train on what the audit chose instead of the defaults below; the
 # file only fills in variables the submitter left unset, so an explicit
 # --export=ALL,FIELD_A=... still takes precedence over it.
@@ -59,7 +57,7 @@ if [ -n "${AUDIT_DIR:-}" ]; then
     audit_env="${AUDIT_DIR}/recommended_${MARKER}.env"
     if [ ! -f "$audit_env" ]; then
         echo "ERROR: AUDIT_DIR is set but ${audit_env} does not exist" >&2
-        echo "Run 'bash slurm/run_audit.sh' first, or unset AUDIT_DIR" >&2
+        echo "Run 'bash run_audit.sh' first, or unset AUDIT_DIR" >&2
         exit 1
     fi
     echo "field selection from the audit: ${audit_env}"
@@ -100,7 +98,7 @@ echo "LAMBDA_CYCLE=${LAMBDA_CYCLE}  FIELD_A=${FIELD_A}  FIELD_B=${FIELD_B} (${FI
 echo "TOPO_DOWNSAMPLE=${TOPO_DOWNSAMPLE}  TOPO_DIMS=${TOPO_DIMS}  TOPO_PROJECTION=${TOPO_PROJECTION}"
 if [ -n "$STAINS" ] && [ ! -f "$STAINS" ]; then
     echo "ERROR: stain vectors not found at ${STAINS}" >&2
-    echo "Run slurm/estimate_stains.sh first, or set STAINS= to use the literature table" >&2
+    echo "Run estimate_stains.sh first, or set STAINS= to use the literature table" >&2
     exit 1
 fi
 echo "LAMBDA_PH_CYC=${PH_CYC}  LAMBDA_PH_TRANS=${PH_TRANS}  LAMBDA_TOPO=${LAMBDA_TOPO}"

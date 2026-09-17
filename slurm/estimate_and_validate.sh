@@ -7,6 +7,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=16G
 #SBATCH --partition=clara
+#SBATCH --exclude=clara[02,04-08]
 #SBATCH --ntasks=1
 # No --gres: Macenko and persistence are both CPU-only.
 
@@ -23,9 +24,9 @@
 #   stain2/stain1  ~ eosin/hematoxylin (A) or dab/hematoxylin (B)
 #   stain1+stain2  ~ hematoxylin+eosin (A) or hematoxylin+dab (B)
 #
-#   sbatch slurm/estimate_and_validate.sh
+#   sbatch estimate_and_validate.sh
 #   sbatch --export='ALL,MARKERS=ER,WITHIN_SLIDE=1,SLIDE_REGEX=_[0-9]+_[0-9]+_r[0-9]+c[0-9]+$' \
-#          slurm/estimate_and_validate.sh
+#          estimate_and_validate.sh
 
 set -eo pipefail
 
@@ -33,9 +34,7 @@ if command -v module >/dev/null 2>&1; then
     module purge
     module load Anaconda3/2025.06-1
     eval "$(conda shell.bash hook)"
-    set +u
     conda activate "${CONDA_ENV:-topocg}"
-    set -u
 fi
 
 MARKERS=${MARKERS:-"Ki67 ER HER2 PR"}

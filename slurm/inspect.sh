@@ -7,6 +7,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=8G
 #SBATCH --partition=clara
+#SBATCH --exclude=clara[02,04-08]
 #SBATCH --ntasks=1
 # No --gres: deconvolution and persistence are both CPU-only.
 
@@ -22,10 +23,10 @@
 # pictures show the field the loss really filters.
 #
 #   mkdir -p logs_topo                      # SLURM will not create it for you
-#   sbatch slurm/inspect.sh                                  # 4 MIST markers
-#   sbatch --export=ALL,MARKERS=BCI slurm/inspect.sh         # just BCI
-#   sbatch --export=ALL,MARKERS=Ki67,PAIRS=16 slurm/inspect.sh
-#   MARKERS=ER PAIRS=2 bash slurm/inspect.sh                 # locally, quick
+#   sbatch inspect.sh                                  # 4 MIST markers
+#   sbatch --export=ALL,MARKERS=BCI inspect.sh         # just BCI
+#   sbatch --export=ALL,MARKERS=Ki67,PAIRS=16 inspect.sh
+#   MARKERS=ER PAIRS=2 bash inspect.sh                 # locally, quick
 #
 # Output: ${OUT}/<marker>/<tile>/ with the deconvolved channels, the merged
 # image the diagram is built from, the filtered field as PNG and .npy, both
@@ -38,9 +39,7 @@ if command -v module >/dev/null 2>&1; then
     module purge
     module load Anaconda3/2025.06-1
     eval "$(conda shell.bash hook)"
-    set +u
     conda activate "${CONDA_ENV:-topocg}"
-    set -u
 fi
 
 MARKERS=${MARKERS:-"Ki67 ER HER2 PR"}
@@ -55,7 +54,7 @@ SEED=${SEED:-0}                # keep at the validation run's seed to inspect
 SAMPLE=${SAMPLE:-random}       # tiles from the same slice it scored
 OFFSET=${OFFSET:-0}
 
-# Defaults deliberately mirror slurm/_sweep_common.sh: change them there and
+# Defaults deliberately mirror _sweep_common.sh: change them there and
 # here together, or the diagnostic stops describing the training run.
 FIELD_A=${FIELD_A:-stain1/stain2}
 FIELD_B=${FIELD_B:-stain1+stain2}

@@ -1,9 +1,14 @@
 ## Training pipeline
 
+All batch scripts are run from the `slurm/` directory, and locate their siblings
+relative to where you called `sbatch` from (a submit from the repo root still
+resolves).
+
 ```bash
-bash slurm/run_pipeline.sh                    # estimate vectors, then train all four markers
-MARKERS="ER Ki67" bash slurm/run_pipeline.sh  # a subset
-SKIP_ESTIMATE=1 bash slurm/run_pipeline.sh    # vectors already estimated
+cd slurm
+bash run_pipeline.sh                    # estimate vectors, then train all four markers
+MARKERS="ER Ki67" bash run_pipeline.sh  # a subset
+SKIP_ESTIMATE=1 bash run_pipeline.sh    # vectors already estimated
 ```
 
 `run_pipeline.sh` is a submitter, not a job: it submits `estimate_stains.sh`,
@@ -267,7 +272,7 @@ BCI ships as `HE/{train,test}` and `IHC/{train,test}` — by domain rather than 
 split — so `topo-crop` accepts `SRC:DST` entries that rename on the way out:
 
 ```bash
-sbatch slurm/prepare_bci.sh
+sbatch prepare_bci.sh
 ```
 
 which runs
@@ -286,7 +291,7 @@ then reporting final numbers on it would leak.
 Afterwards the rest of the pipeline is unchanged:
 
 ```bash
-MARKERS=BCI TILES=/work2/bz66izin-TopoCG/BCI_tiles bash slurm/run_pipeline.sh
+MARKERS=BCI TILES=/work2/bz66izin-TopoCG/BCI_tiles bash run_pipeline.sh
 ```
 
 ## Estimating stain vectors
@@ -324,7 +329,7 @@ for exact comparability. The estimator warns if a domain's two stains come out
 closer than 15 degrees, which is what a cohort with too little of one stain looks
 like.
 
-`slurm/estimate_and_validate.sh` does both steps per marker — estimate on train,
+`estimate_and_validate.sh` does both steps per marker — estimate on train,
 score field combinations on val — writing `stains_<marker>.json` (report these in
 the paper) and `fields_<marker>.txt`.
 
@@ -349,20 +354,20 @@ panel. `summary.json` records the numbers and the exact settings used.
 The field PNGs are contrast stretched for viewing, which is monotone and so
 leaves the topology unchanged; the `.npy` files hold the numbers.
 
-On the cluster, `slurm/inspect.sh` does this for a batch of pairs:
+On the cluster, `inspect.sh` does this for a batch of pairs:
 
 ```bash
 mkdir -p logs_topo
-sbatch slurm/inspect.sh                                     # 4 MIST markers
-sbatch --export=ALL,MARKERS=BCI slurm/inspect.sh            # just BCI
-sbatch --export=ALL,MARKERS=Ki67,PAIRS=16 slurm/inspect.sh  # more tiles
-MARKERS=ER PAIRS=2 bash slurm/inspect.sh                    # locally, quick
+sbatch inspect.sh                                     # 4 MIST markers
+sbatch --export=ALL,MARKERS=BCI inspect.sh            # just BCI
+sbatch --export=ALL,MARKERS=Ki67,PAIRS=16 inspect.sh  # more tiles
+MARKERS=ER PAIRS=2 bash inspect.sh                    # locally, quick
 ```
 
 It draws `PAIRS` tiles per marker with the same `matched_pairs()`, `SEED` and
 `SAMPLE` the field validation uses, so they come from the population the AUROC
 was measured on rather than from wherever `ls` starts, and it defaults to the
-field settings in `slurm/_sweep_common.sh` so the pictures show the field the
+field settings in `_sweep_common.sh` so the pictures show the field the
 loss really filters. Output lands in `${OUT}/<marker>/<tile>/`, and the job log
 ends with a table of every distance. CPU-only, a few seconds per tile.
 
@@ -395,16 +400,16 @@ it does not, that field choice carries no information about correspondence and
 cannot teach `ph_trans` anything, however `lambda_topo` is set.
 
 ```bash
-sbatch slurm/validate_fields.sh                  # all four markers
-sbatch --export=ALL,MARKERS=ER slurm/validate_fields.sh                    # one marker
-MARKERS=ER LIMIT=32 bash slurm/validate_fields.sh                          # locally
+sbatch validate_fields.sh                  # all four markers
+sbatch --export=ALL,MARKERS=ER validate_fields.sh                    # one marker
+MARKERS=ER LIMIT=32 bash validate_fields.sh                          # locally
 
 topo-validate-fields --dataA tiles/ER/TrainValAB/valA --dataB tiles/ER/TrainValAB/valB \
     --field-A hematoxylin/eosin \
     --field-B hematoxylin/dab dab/hematoxylin dab+hematoxylin
 ```
 
-`slurm/validate_fields.sh` runs the full grid for each marker and writes
+`validate_fields.sh` runs the full grid for each marker and writes
 `field_validation/fields_<marker>.txt`. It requests **no GPU** — persistence is
 CPU-only — and skips a marker whose `valA`/`valB` are missing.
 
@@ -466,9 +471,9 @@ noisy statistics, which sits above 0.5 even when nothing is there. `run_audit.sh
 runs the whole thing and applies a rule fixed in advance instead:
 
 ```bash
-bash slurm/run_audit.sh                                   # 4 MIST markers
-MARKERS=BCI bash slurm/run_audit.sh                       # one dataset
-MARKERS="Ki67 ER HER2 PR BCI" bash slurm/run_audit.sh     # everything
+bash run_audit.sh                                   # 4 MIST markers
+MARKERS=BCI bash run_audit.sh                       # one dataset
+MARKERS="Ki67 ER HER2 PR BCI" bash run_audit.sh     # everything
 ```
 
 It submits stain estimation (for markers that need it), then an array of four
@@ -511,7 +516,7 @@ The decision is machine-readable. `recommended_<marker>.env` holds the chosen
 fields, and training consumes it directly:
 
 ```bash
-AUDIT_DIR=/work2/bz66izin-TopoCG/field_audit sbatch slurm/sweep_ki67.sh
+AUDIT_DIR=/work2/bz66izin-TopoCG/field_audit sbatch sweep_ki67.sh
 ```
 
 The env file assigns with `${VAR:-...}`, so it fills in only what the submitter
@@ -524,15 +529,15 @@ exists to prevent.
 ## Validation inference
 
 ```bash
-sbatch --export=ALL,MARKER=ER slurm/infer_sweep.sh                # all 38 cells
-sbatch --export=ALL,MARKER=ER --array=0-18 slurm/infer_sweep.sh   # lambda_cycle=10 only
-sbatch --export=ALL,MARKER=ER,LIMIT=8 --array=13 slurm/infer_sweep.sh
+sbatch --export=ALL,MARKER=ER infer_sweep.sh                # all 38 cells
+sbatch --export=ALL,MARKER=ER --array=0-18 infer_sweep.sh   # lambda_cycle=10 only
+sbatch --export=ALL,MARKER=ER,LIMIT=8 --array=13 infer_sweep.sh
 topo-infer --ckpt <ckpt> --data <tiles> --outdir <out>            # one checkpoint
 ```
 
 `infer_sweep.sh` uses **the same `--array` as the training sweep**: task N infers
 the model that training task N produced, because both resolve the cell through
-`slurm/_grid.sh`, which holds the cell list and the `RUN_NAME` derivation once.
+`_grid.sh`, which holds the cell list and the `RUN_NAME` derivation once.
 It prefers the highest numbered checkpoint and falls back to `step_latest.pt`; a
 cell that has not trained yet prints a note and exits 0, so it does not show up
 as a failed array task. Predictions go to `BASE/preds/<run>/`.
@@ -546,7 +551,7 @@ config class and otherwise follows the zoo's conventions: same transform, same
 
 ## Sweeping the PH weights
 
-One sweep script per MIST marker — `slurm/sweep_ki67.sh`, `sweep_er.sh`,
+One sweep script per MIST marker — `sweep_ki67.sh`, `sweep_er.sh`,
 `sweep_her2.sh`, `sweep_pr.sh` — each a SLURM array job over an explicit
 38-cell grid:
 
@@ -562,7 +567,7 @@ One sweep script per MIST marker — `slurm/sweep_ki67.sh`, `sweep_er.sh`,
 `ph_cyc=0` and `ph_trans=0` together switch off every topological term, making
 `lambda_topo` and both fields inert — those 12 collapse to one anchor run per
 `lambda_cycle`, leaving 38. The cell list is written out in
-`slurm/_sweep_common.sh` rather than computed, so the duplicates are simply
+`_sweep_common.sh` rather than computed, so the duplicates are simply
 absent and a task index past the end is refused.
 
 Tasks 0–18 are `lambda_cycle=10` (the critical path); 19–37 are `lambda_cycle=0`,
@@ -572,13 +577,13 @@ with no spatial anchoring, so it constrains how many features of what persistenc
 exist, never where — only `lambda_identity` would hold content in place.
 
 ```bash
-sbatch slurm/sweep_ki67.sh                                 # all 27
-sbatch --array=0-8,10-17,19-26 slurm/sweep_er.sh           # skip duplicate baselines
-sbatch --array=13 slurm/sweep_her2.sh                      # one cell
+sbatch sweep_ki67.sh                                 # all 27
+sbatch --array=0-8,10-17,19-26 sweep_er.sh           # skip duplicate baselines
+sbatch --array=13 sweep_her2.sh                      # one cell
 ```
 
 The four differ only in their `#SBATCH` header and a `MARKER` assignment; the
-grid, schedule and flags live once in `slurm/_sweep_common.sh`, which each
+grid, schedule and flags live once in `_sweep_common.sh`, which each
 wrapper sources. `_sweep_common.sh` is not submittable on its own — it refuses
 without `MARKER`. **Submit from the repository root** so `SLURM_SUBMIT_DIR`
 locates it, or export `REPO=/path/to/TopoCycleGAN`.

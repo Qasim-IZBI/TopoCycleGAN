@@ -7,10 +7,11 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=24G
 #SBATCH --partition=clara
+#SBATCH --exclude=clara[02,04-08]
 #SBATCH --ntasks=1
 # No --gres: everything here is CPU-only.
 
-# One cell of the field-validation audit. Submit it through slurm/run_audit.sh
+# One cell of the field-validation audit. Submit it through run_audit.sh
 # rather than directly -- that script works out the array size and chains the
 # decision step onto the end.
 #
@@ -35,15 +36,13 @@ if command -v module >/dev/null 2>&1; then
     module purge
     module load Anaconda3/2025.06-1
     eval "$(conda shell.bash hook)"
-    set +u
     conda activate "${CONDA_ENV:-topocg}"
-    set -u
 fi
 
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
-TASK_ID=${SLURM_ARRAY_TASK_ID:?submit through slurm/run_audit.sh}
+TASK_ID=${SLURM_ARRAY_TASK_ID:?submit through run_audit.sh}
 
 MARKERS=${MARKERS:-"Ki67 ER HER2 PR"}
 TILES=${TILES:-/work2/bz66izin-TopoCG/MIST_tiles}
@@ -117,7 +116,7 @@ if [ "$VECTORS" = "estimated" ]; then
     FIELDS_B="$EST_FIELDS_B"
     stains="${STAINS_DIR}/stains_${MARKER}.json"
     if [ ! -f "$stains" ]; then
-        echo "ERROR: ${stains} missing -- run slurm/estimate_stains.sh first" >&2
+        echo "ERROR: ${stains} missing -- run estimate_stains.sh first" >&2
         exit 1
     fi
     stain_arg=(--stains "$stains")
