@@ -349,6 +349,23 @@ panel. `summary.json` records the numbers and the exact settings used.
 The field PNGs are contrast stretched for viewing, which is monotone and so
 leaves the topology unchanged; the `.npy` files hold the numbers.
 
+On the cluster, `slurm/inspect.sh` does this for a batch of pairs:
+
+```bash
+mkdir -p logs_topo
+sbatch slurm/inspect.sh                                     # 4 MIST markers
+sbatch --export=ALL,MARKERS=BCI slurm/inspect.sh            # just BCI
+sbatch --export=ALL,MARKERS=Ki67,PAIRS=16 slurm/inspect.sh  # more tiles
+MARKERS=ER PAIRS=2 bash slurm/inspect.sh                    # locally, quick
+```
+
+It draws `PAIRS` tiles per marker with the same `matched_pairs()`, `SEED` and
+`SAMPLE` the field validation uses, so they come from the population the AUROC
+was measured on rather than from wherever `ls` starts, and it defaults to the
+field settings in `slurm/_sweep_common.sh` so the pictures show the field the
+loss really filters. Output lands in `${OUT}/<marker>/<tile>/`, and the job log
+ends with a table of every distance. CPU-only, a few seconds per tile.
+
 Use it to check the deconvolution looks right on a tile you recognise before
 trusting a validation table — it is how you would catch a stain estimate that has
 failed, since a `stain1` channel that shows overall density rather than nuclei is
