@@ -82,7 +82,11 @@ FIELD_COMBINE=${FIELD_COMBINE:-sum}
 TOPO_DOWNSAMPLE=${TOPO_DOWNSAMPLE:-2}
 TOPO_DIMS=${TOPO_DIMS:-"0 1"}
 TOPO_PROJECTION=${TOPO_PROJECTION:-birth}
-STAINS=${STAINS:-${STAINS_DIR:-/work2/bz66izin-TopoCG/field_validation_estimated}/stains_${MARKER}.json}
+# ${STAINS-...} without the colon, deliberately: an EXPLICITLY EMPTY STAINS
+# means "use the literature table", which is what the audit writes when its
+# fixed-vector arm wins. With ${STAINS:-...} an empty value would be treated as
+# unset and silently replaced by the estimated vectors the audit just rejected.
+STAINS=${STAINS-${STAINS_DIR:-/work2/bz66izin-TopoCG/field_validation_estimated}/stains_${MARKER}.json}
 TOPO_EVERY=${TOPO_EVERY:-2}
 PH_CYC_SPLIT=${PH_CYC_SPLIT:-0}     # 1 = compare the IHC cycle term per stain
                                     # channel; ~+50% persistence cost, so a cell
