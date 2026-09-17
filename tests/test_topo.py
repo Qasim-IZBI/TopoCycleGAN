@@ -1131,3 +1131,54 @@ def test_inspect_estimates_vectors_when_none_given(tmp_path):
     v = estimate_from_images(str(a), str(b), 192)
     assert set(v) == {"A", "B"}
     assert angle_between(v["A"]["stain1"], H) < 10.0
+
+
+def _run_inspect(tmp_path, field_b, outname="out"):
+    import json, sys
+    import numpy as np
+    from topo_i2i.fields import STAIN_VECTORS
+    from topo_i2i.inspect import main
+    H = np.array(STAIN_VECTORS["hematoxylin"]); H /= np.linalg.norm(H)
+    E = np.array(STAIN_VECTORS["eosin"]);       E /= np.linalg.norm(E)
+    D = np.array(STAIN_VECTORS["dab"]);         D /= np.linalg.norm(D)
+    a, b = tmp_path/"a.png", tmp_path/"b.png"
+    _stain_tile(str(a), H, E, 0); _stain_tile(str(b), H, D, 1)
+    stains = tmp_path/"s.json"
+    stains.write_text(json.dumps({
+        "A": {"stain1": list(H), "stain2": list(E), "separation_deg": 30.0},
+        "B": {"stain1": list(H), "stain2": list(D), "separation_deg": 37.0},
+        "meta": {}}))
+    out = tmp_path/outname
+    argv = sys.argv
+    sys.argv = ["topo-inspect", "--imageA", str(a), "--imageB", str(b),
+                "--stains", str(stains), "--field-A", "stain1/stain2",
+                "--field-B", field_b, "--image-size", "64", "--downsample", "1",
+                "--outdir", str(out)]
+    try:
+        main()
+    finally:
+        sys.argv = argv
+    return out
+
+
+def test_merged_field_is_saved_when_the_spec_merges(tmp_path):
+    out = _run_inspect(tmp_path, "stain1+stain2", "merged")
+    assert (out/"B_combined.png").exists(), "the merged image the diagram uses must be saved"
+    assert not (out/"A_combined.png").exists(), "field_A is a single channel here"
+
+
+def test_no_combined_image_for_a_single_channel_spec(tmp_path):
+    out = _run_inspect(tmp_path, "stain2/stain1", "single")
+    assert not (out/"B_combined.png").exists()
+
+
+def test_saved_field_array_reproduces_the_diagram(tmp_path):
+    """The .npy must be the exact values the diagram came from."""
+    import numpy as np
+    import torch
+    from topo_i2i.persistence import persistence_diagram
+    out = _run_inspect(tmp_path, "stain1+stain2", "exact")
+    arr = np.load(out/"B_field.npy")
+    d = persistence_diagram(torch.from_numpy(arr), (0, 1))
+    rows = (out/"B_diagram.csv").read_text().strip().split("\n")[1:]
+    assert len(rows) == d[0].shape[0] + d[1].shape[0]

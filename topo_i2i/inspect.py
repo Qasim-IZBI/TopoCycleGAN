@@ -4,6 +4,11 @@ Given an image from each domain, this produces the deconvolved stain channels,
 the scalar field each one is reduced to, the persistence diagram of each field,
 and the diagram distance between them -- the exact quantity ph_trans minimises.
 
+For a merged spec like `stain1+stain2` the combined image is written too, since
+that is what the diagram is actually built from. `<tag>_field.npy` holds the
+exact values; the matching PNG is contrast stretched for viewing, which is
+monotone and so leaves the topology unchanged.
+
 It is a diagnostic, not part of training: use it to see what the loss is actually
 looking at on a tile you recognise, and to produce figures.
 
@@ -80,14 +85,15 @@ def make_figure(panels, dgms, dims, proj, outdir):
         print("[note] matplotlib not available -- skipping the figure")
         return None
 
-    fig, axes = plt.subplots(3, 4, figsize=(15, 11))
+    ncol = max(len(panels["A"]), len(panels["B"]))
+    fig, axes = plt.subplots(3, ncol, figsize=(3.7 * ncol, 11), squeeze=False)
     for row, tag in enumerate(("A", "B")):
         for col, (title, arr) in enumerate(panels[tag]):
             ax = axes[row][col]
             ax.imshow(arr, cmap=None if arr.ndim == 3 else "gray")
             ax.set_title("%s: %s" % (tag, title), fontsize=9)
             ax.axis("off")
-        for col in range(len(panels[tag]), 4):
+        for col in range(len(panels[tag]), ncol):
             axes[row][col].axis("off")
 
     ax = axes[2][0]
@@ -116,7 +122,8 @@ def make_figure(panels, dgms, dims, proj, outdir):
     ax.set_xlabel("rank"); ax.set_ylabel("projected value")
     ax.set_title("sorted projections -- the distance is the area between", fontsize=9)
     ax.legend(fontsize=6)
-    axes[2][2].axis("off"); axes[2][3].axis("off")
+    for col in range(2, ncol):
+        axes[2][col].axis("off")
 
     fig.tight_layout()
     path = os.path.join(outdir, "overview.png")
@@ -185,13 +192,26 @@ def main() -> None:
                 concentration_png(c, os.path.join(args.outdir, "%s_%s.png" % (tag, name)))
                 panels[tag].append(("%s concentration" % name, c))
 
+        # When the spec merges two stains, the merged concentration is what the
+        # diagram is built from -- save it in the same dark-is-strong convention
+        # as the individual channels, so the three are directly comparable.
+        if "+" in specs[tag]:
+            merged = make_field(specs[tag], args.field_combine,
+                                vectors=vectors[tag])(x)[0].numpy()
+            concentration_png(merged, os.path.join(args.outdir, "%s_combined.png" % tag))
+            panels[tag].append(("%s (%s)" % (specs[tag], args.field_combine), merged))
+
         # The field the loss actually filters, after combine / downsample / invert.
         xd = torch.nn.functional.avg_pool2d(x, args.downsample) if args.downsample > 1 else x
         f = make_field(specs[tag], args.field_combine, vectors=vectors[tag])(xd)[0].double()
         f = -f if invert else f
         arr = f.numpy()
         field_png(arr, os.path.join(args.outdir, "%s_field.png" % tag))
-        panels[tag].append(("field: %s%s" % (specs[tag], " (negated)" if invert else ""), arr))
+        # The exact values the diagram came from -- the PNG above is contrast
+        # stretched for viewing, which is monotone and so leaves the topology
+        # unchanged, but is not the numbers.
+        np.save(os.path.join(args.outdir, "%s_field.npy" % tag), arr)
+        panels[tag].append(("filtered field%s" % (" (negated)" if invert else ""), arr))
 
         d = persistence_diagram(f, dims)
         dgms[tag] = d

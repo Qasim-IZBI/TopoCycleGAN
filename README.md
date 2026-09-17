@@ -340,10 +340,14 @@ topo-inspect --imageA valA/10M2102916_10_17_r0c0.png \
 ```
 
 Walks one image pair through the whole loss and writes every intermediate: both
-deconvolved stain channels per domain, the scalar field each is reduced to, the
-persistence diagram of each field as CSV, the distance broken down per homology
-dimension, and an `overview.png` panel. `summary.json` records the numbers and
-the exact settings used.
+deconvolved stain channels per domain, the merged image when the spec is `a+b`
+(`<tag>_combined.png` — that is what the diagram is built from), the filtered
+field, the exact field values as `<tag>_field.npy`, each persistence diagram as
+CSV, the distance broken down per homology dimension, and an `overview.png`
+panel. `summary.json` records the numbers and the exact settings used.
+
+The field PNGs are contrast stretched for viewing, which is monotone and so
+leaves the topology unchanged; the `.npy` files hold the numbers.
 
 Use it to check the deconvolution looks right on a tile you recognise before
 trusting a validation table — it is how you would catch a stain estimate that has
