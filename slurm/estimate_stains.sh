@@ -43,6 +43,13 @@ PIXELS_PER_TILE=${PIXELS_PER_TILE:-20000}  # at most this many pixels, so covera
 SEED=${SEED:-0}
 FORCE=${FORCE:-0}
 
+# Tile root per marker: TILES_<MARKER> wins if it is set, else TILES. That is
+# how a dataset tiled somewhere else (BCI, VS) joins in without editing this.
+tiles_root() {
+    local var="TILES_$1"
+    echo "${!var:-$TILES}"
+}
+
 mkdir -p "$STAINS_DIR"
 
 for MARKER in $MARKERS; do
@@ -51,10 +58,7 @@ for MARKER in $MARKERS; do
         echo "[keep] ${MARKER}: ${out} already exists (FORCE=1 to redo)"
         continue
     fi
-    case "$MARKER" in
-        BCI) root="$TILES_BCI" ;;
-        *)   root="$TILES" ;;
-    esac
+    root="$(tiles_root "$MARKER")"
     TRAIN_A="${root}/${MARKER}/TrainValAB/trainA"
     TRAIN_B="${root}/${MARKER}/TrainValAB/trainB"
     if [ ! -d "$TRAIN_A" ] || [ ! -d "$TRAIN_B" ]; then

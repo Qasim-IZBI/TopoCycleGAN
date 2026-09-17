@@ -73,11 +73,11 @@ default_fields() {
     PROJECTION=${PROJECTION:-birth}
 }
 
+# Tile root per marker: TILES_<MARKER> wins if it is set, else TILES. That is
+# how a dataset tiled somewhere else (BCI, VS) joins in without editing this.
 tiles_root() {
-    case "$1" in
-        BCI) echo "$TILES_BCI" ;;
-        *)   echo "$TILES" ;;
-    esac
+    local var="TILES_$1"
+    echo "${!var:-$TILES}"
 }
 
 mkdir -p "$OUT"

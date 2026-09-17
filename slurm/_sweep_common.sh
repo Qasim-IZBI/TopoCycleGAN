@@ -126,10 +126,13 @@ fi
 # per-marker -- the same split audit_fields, inspect and estimate_stains make.
 TILES=${TILES:-/work2/bz66izin-TopoCG/MIST_tiles}
 TILES_BCI=${TILES_BCI:-/work2/bz66izin-TopoCG/BCI_tiles}
-case "$MARKER" in
-    BCI) TILE_ROOT="$TILES_BCI" ;;
-    *)   TILE_ROOT="$TILES" ;;
-esac
+# Tile root per marker: TILES_<MARKER> wins if it is set, else TILES. That is
+# how a dataset tiled somewhere else (BCI, VS) joins in without editing this.
+tiles_root() {
+    local var="TILES_$1"
+    echo "${!var:-$TILES}"
+}
+TILE_ROOT="$(tiles_root "$MARKER")"
 DATA_DIR=${DATA_DIR:-${TILE_ROOT}/${MARKER}/TrainValAB}
 DATA_A=${DATA_A:-${DATA_DIR}/trainA/}
 DATA_B=${DATA_B:-${DATA_DIR}/trainB/}

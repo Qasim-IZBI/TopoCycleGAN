@@ -25,9 +25,12 @@ STAIN_VECTORS = {
     "hematoxylin": (0.65, 0.70, 0.29),
     "eosin": (0.2159, 0.8012, 0.5581),
     "dab": (0.27, 0.57, 0.78),
-    # Sirius Red picks up collagen. These are literature values -- estimate the
-    # real vectors from your own slides (QuPath: Analyze > Estimate stain
-    # vectors > Auto) and replace them.
+    # UNVERIFIED. Hematoxylin, eosin and DAB above are QuPath's built-in
+    # vectors. This one is not: it is a plausible-looking value with no source
+    # behind it, kept only so an 'sr' spec resolves at all. Estimate the real
+    # vector from your own slides with topo-estimate-stains before trusting any
+    # number computed through it, and prefer the estimated arm of the audit on
+    # Sirius Red data -- its fixed arm is only as good as this guess.
     "sirius_red": (0.36, 0.66, 0.66),
 }
 

@@ -98,10 +98,13 @@ MARKER=${MARKER_ARR[$m_idx]}
 VECTORS=${VECTOR_ARR[$v_idx]}
 CONTROL=${CONTROL_ARR[$c_idx]}
 
-case "$MARKER" in
-    BCI) root="$TILES_BCI" ;;
-    *)   root="$TILES" ;;
-esac
+# Tile root per marker: TILES_<MARKER> wins if it is set, else TILES. That is
+# how a dataset tiled somewhere else (BCI, VS) joins in without editing this.
+tiles_root() {
+    local var="TILES_$1"
+    echo "${!var:-$TILES}"
+}
+root="$(tiles_root "$MARKER")"
 VAL_A="${root}/${MARKER}/TrainValAB/valA"
 VAL_B="${root}/${MARKER}/TrainValAB/valB"
 if [ ! -d "$VAL_A" ] || [ ! -d "$VAL_B" ]; then

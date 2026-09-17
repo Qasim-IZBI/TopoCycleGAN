@@ -294,6 +294,52 @@ Afterwards the rest of the pipeline is unchanged:
 MARKERS=BCI TILES=/work2/bz66izin-TopoCG/BCI_tiles bash run_pipeline.sh
 ```
 
+## Datasets grouped by case (VS)
+
+The VS H&E / Sirius Red tiles arrive one directory per case —
+`QP_HE/tiles/trainA/<case>/images/<id>.tif` — rather than as flat directories.
+`prepare_vs.sh` presents them in the expected layout as a tree of **symlinks**,
+named `<case>_<id>.tif`:
+
+```bash
+mkdir -p logs_topo
+sbatch prepare_vs.sh
+```
+
+The case prefix is load-bearing: `--slide-regex '_[0-9]+$'` groups on it, which
+is what lets the within-slide control run at all. Without a case in the name,
+every tile would be its own group. Note this gives a **case-level** control,
+weaker than the adjacent-quadrant control MIST and BCI get from their
+`_r<row>c<col>` names, so VS's inflation number is not directly comparable to
+theirs. If `tiles_metadata.csv` carries tile coordinates, a name encoding those
+would allow the stricter grouping; the script prints the header so you can see.
+
+It also checks the thing everything else depends on — whether a tile id names
+the same tissue in both domains — and refuses to finish if no id is shared,
+because `matched_pairs` would otherwise fall back silently to sorted order and
+every AUROC after that would be measuring nothing.
+
+Then the audit, with VS's own tile root:
+
+```bash
+export MARKERS=VS
+export TILES_VS=/work2/bz66izin-TopoCG/VS_tiles
+export SLIDE_REGEX='_[0-9]+$'
+export AUDIT=/work2/bz66izin-TopoCG/field_audit_vs
+export FIX_FIELDS_B='sirius_red/hematoxylin hematoxylin/sirius_red hematoxylin+sirius_red'
+bash run_audit.sh
+```
+
+`TILES_<MARKER>` overrides `TILES` for one marker everywhere — audit, inspect,
+stain estimation and training all consult it — so a dataset tiled elsewhere
+needs no code change.
+
+**On Sirius Red vectors:** hematoxylin, eosin and DAB in `fields.STAIN_VECTORS`
+are QuPath's built-ins. `sirius_red` is not — it is a guess with no source
+behind it. On this dataset the audit's `fixed` arm is only as good as that
+number, so weigh the `estimated` arm more heavily, and report the estimated
+vectors rather than the table.
+
 ## Estimating stain vectors
 
 The vectors in `fields.STAIN_VECTORS` are literature defaults, fitted to nobody's
