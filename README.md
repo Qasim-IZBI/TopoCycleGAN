@@ -312,13 +312,24 @@ mkdir -p logs_topo
 sbatch prepare_vs.sh
 ```
 
-The case prefix is load-bearing: `--slide-regex '_[0-9]+$'` groups on it, which
-is what lets the within-slide control run at all. Without a case in the name,
-every tile would be its own group. Note this gives a **case-level** control,
-weaker than the adjacent-quadrant control MIST and BCI get from their
-`_r<row>c<col>` names, so VS's inflation number is not directly comparable to
-theirs. If `tiles_metadata.csv` carries tile coordinates, a name encoding those
-would allow the stricter grouping; the script prints the header so you can see.
+Validation tiles are renamed by their position on the slide grid, read from
+`tiles_metadata.csv`:
+
+```
+<case>_<blockrow>_<blockcol>_r<row in block>c<col in block>.tif
+```
+
+VS's tiles are 512 px at stride 512, so unlike MIST there are no quadrants of a
+larger tile to group. Pairing them into 2×2 blocks of the grid manufactures the
+same thing: the default `--slide-regex` strips `_r<r>c<c>` and leaves a group of
+four **directly adjacent** tiles. So VS gets the same strict control as MIST and
+BCI, and its inflation number is comparable to theirs. No `SLIDE_REGEX` override
+is needed.
+
+Pairs are matched on the slide **coordinate**, not the tile id. The coordinate is
+the physical fact; the id is a counter that agrees only if both domains were
+tiled in the same order. The script reports how often the id would have agreed —
+a disagreement there is exactly the silent mismatch this check exists to catch.
 
 On the validation set it checks the thing everything else depends on — whether a
 tile id names the same tissue in both domains — and refuses to finish if no id is
@@ -340,7 +351,6 @@ Then the audit, with VS's own tile root:
 ```bash
 export MARKERS=VS
 export TILES_VS=/work2/bz66izin-TopoCG/VS_tiles
-export SLIDE_REGEX='_[0-9]+$'
 export AUDIT=/work2/bz66izin-TopoCG/field_audit_vs
 export FIX_FIELDS_B='sirius_red/hematoxylin hematoxylin/sirius_red hematoxylin+sirius_red'
 bash run_audit.sh

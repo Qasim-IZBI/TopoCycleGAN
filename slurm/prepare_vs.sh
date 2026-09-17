@@ -76,7 +76,7 @@ echo "exclude val cases from train: ${EXCLUDE_VAL_CASES}"
 echo
 
 python - "$TRAIN_A" "$TRAIN_B" "$VAL_A" "$VAL_B" "$OUT" "$COPY" "$EXCLUDE_VAL_CASES" <<'PY'
-import os, shutil, sys
+import csv, os, shutil, sys
 
 train_a, train_b, val_a, val_b, out, copy, exclude = sys.argv[1:]
 copy, exclude = copy == "1", exclude == "1"
@@ -103,25 +103,76 @@ print("train: %d cases / %d tiles in A, %d cases / %d tiles in B"
 print("val:   %d cases / %d tiles in A, %d cases / %d tiles in B"
       % (len(va), n(va), len(vb), n(vb)))
 
-# The decisive check, and it only applies to the validation set: a tile id has
-# to name the same tissue in both domains, or the pairing every AUROC rests on
-# is fictional. Training is unpaired and needs none of this.
+def coords(root, case):
+    """{tile id: (x, y, tile_size)} from tiles_metadata.csv, or None."""
+    path = os.path.join(root, case, "tiles_metadata.csv")
+    if not os.path.exists(path):
+        return None
+    out = {}
+    with open(path, newline="") as fh:
+        for row in csv.DictReader(fh):
+            try:
+                out[row["tile_name"]] = (int(row["x"]), int(row["y"]),
+                                         int(row["tile_size"]))
+            except (KeyError, TypeError, ValueError):
+                return None
+    return out or None
+
+
+# The decisive step, and it only applies to the validation set: a tile in A has
+# to name the same tissue as its partner in B, or the pairing every AUROC rests
+# on is fictional. Training is unpaired and needs none of this.
+#
+# Pair on the slide COORDINATE rather than the tile id. The coordinate is the
+# physical fact; the id is a counter that happens to agree only if both domains
+# were tiled in the same order. Where the metadata is present we use it and
+# report whether id-pairing would have agreed -- a disagreement there is exactly
+# the silent failure this whole check exists to catch.
 shared_cases = sorted(set(va) & set(vb))
-paired = {c: sorted(set(va[c]) & set(vb[c])) for c in shared_cases}
+paired, by_pos, id_agree, id_total = {}, {}, 0, 0
+for c in shared_cases:
+    ca, cb = coords(val_a, c), coords(val_b, c)
+    if ca and cb:
+        pos_b = {(x, y): t for t, (x, y, _) in cb.items()}
+        hits = []
+        for tile, (x, y, size) in sorted(ca.items()):
+            if tile not in va[c] or (x, y) not in pos_b:
+                continue
+            partner = pos_b[(x, y)]
+            if partner not in vb[c]:
+                continue
+            hits.append((tile, partner))
+            by_pos[(c, tile)] = (x // size, y // size)   # (col, row) on the grid
+            id_total += 1
+            id_agree += (tile == partner)
+        paired[c] = hits
+    else:
+        # No usable metadata: fall back to the id, and say so.
+        paired[c] = [(t, t) for t in sorted(set(va[c]) & set(vb[c]))]
+
 n_paired = sum(len(v) for v in paired.values())
 print("\nREGISTERED PAIRS (what the audit will use)")
-print("  %d cases in both domains, %d tile ids shared" % (len(shared_cases), n_paired))
+print("  %d cases in both domains, %d tiles paired" % (len(shared_cases), n_paired))
 for c in shared_cases:
-    print("    case %-6s A %5d   B %5d   shared %5d"
+    print("    case %-6s A %5d   B %5d   paired %5d"
           % (c, len(va[c]), len(vb[c]), len(paired[c])))
+if id_total:
+    print("  paired on slide coordinates from tiles_metadata.csv; the tile id "
+          "agreed on %d of %d (%.1f%%)" % (id_agree, id_total,
+                                           100.0 * id_agree / id_total))
+    if id_agree < id_total:
+        print("  [NOTE] the ids do NOT always agree, so pairing by filename alone "
+              "would have\n         mismatched tiles. The coordinates are right.")
+else:
+    print("  [WARN] no usable tiles_metadata.csv -- paired on the tile id, which "
+          "assumes\n         both domains were tiled in the same order.")
 
 if n_paired == 0:
     sys.exit(
-        "\nERROR: no tile id appears in both domains for any validation case.\n"
-        "The audit pairs tiles BY NAME; with no shared ids it would fall back to\n"
-        "sorted order and every AUROC would be meaningless. Check whether the two\n"
-        "domains share a tile numbering, or build the pairing from the coordinates\n"
-        "in tiles_metadata.csv.")
+        "\nERROR: nothing paired between the two domains for any validation case.\n"
+        "The audit pairs tiles BY NAME; with nothing to pair it would fall back to\n"
+        "sorted order and every AUROC would be meaningless. Check that the two\n"
+        "domains cover the same slide coordinates.")
 
 # With n tiles per slice the pre-registered bar is 0.5 + 2.58 * sqrt(1/6 / n).
 # Say it now, so a weak verdict later is read as low power rather than no signal.
@@ -170,12 +221,29 @@ for idx, sub in ((ta, "trainA"), (tb, "trainB")):
             link(src, os.path.join(out, sub, name))
             counts[sub] = counts.get(sub, 0) + 1
 
-# Validation: only ids present in BOTH domains, so valA[i] really pairs valB[i].
+# Validation: a matched pair gets the SAME name in both directories, built from
+# its position on the slide grid:
+#
+#     <case>_<blockrow>_<blockcol>_r<row within block>c<col within block>
+#
+# Tiles here are 512 px at stride 512, so unlike MIST there are no quadrants of
+# a larger tile to group. Pairing them into 2x2 blocks of the grid manufactures
+# the same thing: stripping _r<r>c<c> leaves a group of four DIRECTLY ADJACENT
+# tiles. That makes VS's within-slide control the same test as MIST's and BCI's,
+# so its inflation number is comparable to theirs rather than to a weaker
+# case-level control.
 for case in shared_cases:
-    for tile in paired[case]:
-        for dom, idx in (("A", va), ("B", vb)):
-            src = idx[case][tile]
-            name = "%s_%s%s" % (case, tile, os.path.splitext(src)[1])
+    for tile, partner in paired[case]:
+        pos = by_pos.get((case, tile))
+        if pos is None:
+            name_stem = "%s_%s" % (case, tile)          # no metadata: id only
+        else:
+            col, row = pos
+            name_stem = "%s_%d_%d_r%dc%d" % (case, row // 2, col // 2,
+                                             row % 2, col % 2)
+        for dom, idx, t in (("A", va, tile), ("B", vb, partner)):
+            src = idx[case][t]
+            name = name_stem + os.path.splitext(src)[1]
             link(src, os.path.join(out, "val" + dom, name))
             counts["val" + dom] = counts.get("val" + dom, 0) + 1
 
@@ -197,11 +265,12 @@ fi
 
 echo
 echo "================================================================"
-echo "Next, with VS's own tile root and a CASE-level control:"
+echo "Next, with VS's own tile root. No SLIDE_REGEX is needed: the names carry"
+echo "_r<row>c<col>, so the DEFAULT regex groups four adjacent tiles, the same"
+echo "strict control MIST and BCI get."
 echo
 echo "  export MARKERS=VS"
 echo "  export TILES_VS=$(dirname "$(dirname "$OUT")")"
-echo "  export SLIDE_REGEX='_[0-9]+\$'"
 echo "  export AUDIT=/work2/bz66izin-TopoCG/field_audit_vs"
 echo "  export FIX_FIELDS_B='sirius_red/hematoxylin hematoxylin/sirius_red hematoxylin+sirius_red'"
 echo "  bash run_audit.sh"
