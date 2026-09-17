@@ -63,8 +63,18 @@ def estimate_stains(od_pixels, min_od=0.05, max_od=1.0, ignore_percentage=1.0):
     return v1, v2
 
 
-def sample_od(directory: str, limit: int = 200, max_side: int = 256, seed: int = 0):
-    """Pool optical densities from a random sample of tiles in a directory."""
+def sample_od(directory: str, limit: int = 200, max_side: int = 256, seed: int = 0,
+              pixels_per_tile: int = 20000):
+    """Pool optical densities from a random sample of tiles in a directory.
+
+    `pixels_per_tile` caps how many pixels each tile contributes. The estimate
+    needs a 3x3 second-moment matrix and two angular percentiles, which converge
+    after a few hundred thousand pixels -- what actually varies between runs is
+    which SLIDES were drawn, not how many pixels came from each. Capping the
+    pixels lets `limit` cover far more of the cohort at the same memory: pooling
+    whole 256px tiles costs ~1.6 MB each, so the full training set would need
+    tens of GB, while 2000 capped tiles fit in under a GB.
+    """
     files = sorted(f for f in os.listdir(directory) if f.lower().endswith(IMAGE_EXTS))
     if not files:
         raise ValueError("no images in %s" % directory)
@@ -76,7 +86,10 @@ def sample_od(directory: str, limit: int = 200, max_side: int = 256, seed: int =
         img = Image.open(os.path.join(directory, f)).convert("RGB")
         if max(img.size) > max_side:
             img = img.resize((max_side, max_side), Image.BILINEAR)
-        chunks.append(rgb_to_od(np.asarray(img)).reshape(-1, 3))
+        od = rgb_to_od(np.asarray(img)).reshape(-1, 3)
+        if pixels_per_tile and od.shape[0] > pixels_per_tile:
+            od = od[rng.choice(od.shape[0], pixels_per_tile, replace=False)]
+        chunks.append(od)
     return np.concatenate(chunks, axis=0), len(files)
 
 
@@ -96,17 +109,18 @@ def order_like(pair, reference=None):
 
 def estimate_for_run(data_a, data_b, limit=200, min_od=0.05, max_od=1.0,
                      ignore_percentage=1.0, seed=0, pin_shared=False,
-                     min_separation=15.0):
+                     min_separation=15.0, pixels_per_tile=20000):
     """Estimate both domains' stain pairs and return a JSON-ready dict."""
     out = {"meta": {"method": "macenko", "limit": limit, "min_od": min_od,
                     "max_od": max_od, "ignore_percentage": ignore_percentage,
-                    "seed": seed, "pin_shared": pin_shared}}
+                    "seed": seed, "pin_shared": pin_shared,
+                    "pixels_per_tile": pixels_per_tile}}
     warnings = []
 
-    od_a, n_a = sample_od(data_a, limit, seed=seed)
+    od_a, n_a = sample_od(data_a, limit, seed=seed, pixels_per_tile=pixels_per_tile)
     a1, a2 = order_like(estimate_stains(od_a, min_od, max_od, ignore_percentage))
 
-    od_b, n_b = sample_od(data_b, limit, seed=seed)
+    od_b, n_b = sample_od(data_b, limit, seed=seed, pixels_per_tile=pixels_per_tile)
     # Order B's pair against A's first stain so the two domains' channel 1 mean
     # the same thing, rather than depending on a per-domain heuristic.
     b1, b2 = order_like(estimate_stains(od_b, min_od, max_od, ignore_percentage),
@@ -145,7 +159,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dataA", required=True, help="domain A tiles (estimate from TRAIN)")
     p.add_argument("--dataB", required=True, help="domain B tiles")
     p.add_argument("--out", required=True, help="where to write the JSON")
-    p.add_argument("--limit", type=int, default=200, help="tiles to pool per domain")
+    p.add_argument("--limit", type=int, default=2000, help="tiles to pool per domain")
+    p.add_argument("--pixels-per-tile", type=int, default=20000, metavar="N",
+                   help="cap each tile's contribution. Coverage across slides "
+                        "matters more than pixels per slide, and pooling whole "
+                        "tiles would need tens of GB for a full training set")
     p.add_argument("--min-od", type=float, default=0.05)
     p.add_argument("--max-od", type=float, default=1.0)
     p.add_argument("--ignore", type=float, default=1.0, help="angular percentile to trim")
@@ -163,7 +181,7 @@ def main() -> None:
     args = build_parser().parse_args()
     result = estimate_for_run(args.dataA, args.dataB, args.limit, args.min_od,
                               args.max_od, args.ignore, args.seed, args.pin_shared,
-                              args.min_separation)
+                              args.min_separation, args.pixels_per_tile)
     os.makedirs(os.path.dirname(os.path.abspath(args.out)) or ".", exist_ok=True)
     with open(args.out, "w") as fh:
         json.dump(result, fh, indent=2)

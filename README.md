@@ -302,6 +302,15 @@ topo-estimate-stains --dataA tiles/ER/TrainValAB/trainA \
                      --out runs/stains_ER.json
 ```
 
+`--limit` defaults to 2000 tiles per domain with `--pixels-per-tile 20000`.
+Measured on tiles with per-slide staining jitter, the estimate converges by ~100
+tiles (angular error flat from 10 tiles; seed-to-seed spread collapses from 1.06
+to 0.09 degrees by 100), so the sample size is not about precision — it is about
+covering the cohort's staining variation. Pooling *whole* tiles is what limits
+that: at ~1.6 MB per 256px tile a full training set would need tens of GB, so
+capping the pixels per tile lets `--limit` cover many more slides at the same
+memory.
+
 Estimate **once**, from TRAIN, and reuse the JSON everywhere downstream.
 Re-estimating per run — or per batch — makes the loss non-stationary and puts a
 discontinuity in the middle of a requeued job.

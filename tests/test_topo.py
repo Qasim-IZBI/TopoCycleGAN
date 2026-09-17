@@ -1035,3 +1035,37 @@ def test_low_separation_is_warned(tmp_path):
         _stain_tile(str(b/("t%02d.png" % i)), v1, v2, i+500)
     res = estimate_for_run(str(a), str(b), limit=10, min_separation=15.0)
     assert any("deg apart" in w for w in res["meta"]["warnings"])
+
+
+def test_pixels_per_tile_caps_the_pooled_sample(tmp_path):
+    """Coverage across slides should scale without the memory scaling with it."""
+    import numpy as np
+    from topo_i2i.stains import sample_od
+    d = tmp_path / "A"
+    d.mkdir()
+    for i in range(6):
+        _write_image(str(d / ("t%02d.png" % i)), (64, 64))
+    full, n = sample_od(str(d), limit=6, pixels_per_tile=0)
+    capped, _ = sample_od(str(d), limit=6, pixels_per_tile=100)
+    assert n == 6
+    assert full.shape[0] == 6 * 64 * 64
+    assert capped.shape[0] == 6 * 100
+    assert capped.shape[1] == 3
+
+
+def test_capped_sampling_still_recovers_the_vectors(tmp_path):
+    import numpy as np
+    from topo_i2i.fields import STAIN_VECTORS
+    from topo_i2i.stains import estimate_for_run, angle_between
+    H = np.array(STAIN_VECTORS["hematoxylin"]); H /= np.linalg.norm(H)
+    E = np.array(STAIN_VECTORS["eosin"]);       E /= np.linalg.norm(E)
+    D = np.array(STAIN_VECTORS["dab"]);         D /= np.linalg.norm(D)
+    a, b = tmp_path/"A", tmp_path/"B"
+    a.mkdir(); b.mkdir()
+    for i in range(12):
+        _stain_tile(str(a/("t%02d.png" % i)), H, E, i)
+        _stain_tile(str(b/("t%02d.png" % i)), H, D, i+500)
+    res = estimate_for_run(str(a), str(b), limit=12, pixels_per_tile=4000)
+    assert angle_between(res["A"]["stain1"], H) < 4.0
+    assert angle_between(res["B"]["stain2"], D) < 4.0
+    assert res["meta"]["pixels_per_tile"] == 4000

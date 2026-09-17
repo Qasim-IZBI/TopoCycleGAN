@@ -42,7 +42,9 @@ MARKERS=${MARKERS:-"Ki67 ER HER2 PR"}
 TILES=${TILES:-/work2/bz66izin-TopoCG/MIST_tiles}
 OUT=${OUT:-/work2/bz66izin-TopoCG/field_validation_estimated}
 
-EST_LIMIT=${EST_LIMIT:-300}     # tiles pooled per domain for the estimate
+EST_LIMIT=${EST_LIMIT:-2000}     # tiles pooled per domain; each contributes
+PIXELS_PER_TILE=${PIXELS_PER_TILE:-20000}  # at most this many pixels, so coverage
+                                # scales across slides without the memory scaling
 PIN_SHARED=${PIN_SHARED:-0}     # 1 = force domain B stain1 := domain A stain1
 
 LIMIT=${LIMIT:-2000}
@@ -84,6 +86,7 @@ for MARKER in $MARKERS; do
     topo-estimate-stains \
         --dataA "$TRAIN_A" --dataB "$TRAIN_B" \
         --out "$stains" --limit "$EST_LIMIT" --seed "$SEED" \
+        --pixels-per-tile "$PIXELS_PER_TILE" \
         $( [ "$PIN_SHARED" = "1" ] && echo --pin-shared )
 
     echo

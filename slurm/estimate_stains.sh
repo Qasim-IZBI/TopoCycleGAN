@@ -35,7 +35,9 @@ fi
 MARKERS=${MARKERS:-"Ki67 ER HER2 PR"}
 TILES=${TILES:-/work2/bz66izin-TopoCG/MIST_tiles}
 STAINS_DIR=${STAINS_DIR:-/work2/bz66izin-TopoCG/field_validation_estimated}
-EST_LIMIT=${EST_LIMIT:-300}
+EST_LIMIT=${EST_LIMIT:-2000}     # tiles pooled per domain; each contributes
+PIXELS_PER_TILE=${PIXELS_PER_TILE:-20000}  # at most this many pixels, so coverage
+                                # scales across slides without the memory scaling
 SEED=${SEED:-0}
 FORCE=${FORCE:-0}
 
@@ -56,7 +58,8 @@ for MARKER in $MARKERS; do
     echo
     echo "=== ${MARKER} ==="
     topo-estimate-stains --dataA "$TRAIN_A" --dataB "$TRAIN_B" \
-        --out "$out" --limit "$EST_LIMIT" --seed "$SEED"
+        --out "$out" --limit "$EST_LIMIT" --seed "$SEED" \
+        --pixels-per-tile "$PIXELS_PER_TILE"
 done
 
 echo
