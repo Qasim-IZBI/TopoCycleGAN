@@ -39,8 +39,13 @@ if command -v module >/dev/null 2>&1; then
     conda activate "${CONDA_ENV:-topocg}"
 fi
 
+# BLAS stays single-threaded: the parallelism that pays here is one thread per
+# IMAGE inside topo-validate-fields (gudhi releases the GIL), and letting BLAS
+# also fan out just makes the two fight over the same cores.
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
+export TOPO_WORKERS=${TOPO_WORKERS:-${SLURM_CPUS_PER_TASK:-8}}
+echo "persistence threads: ${TOPO_WORKERS}"
 
 TASK_ID=${SLURM_ARRAY_TASK_ID:?submit through run_audit.sh}
 

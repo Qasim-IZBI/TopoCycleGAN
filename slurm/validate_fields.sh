@@ -31,6 +31,8 @@ if command -v module >/dev/null 2>&1; then
     conda activate "${CONDA_ENV:-topocg}"
 fi
 
+export TOPO_WORKERS=${TOPO_WORKERS:-${SLURM_CPUS_PER_TASK:-8}}
+
 MARKERS=${MARKERS:-"Ki67 ER HER2 PR"}
 TILES=${TILES:-/work2/bz66izin-TopoCG/MIST_tiles}
 OUT=${OUT:-/work2/bz66izin-TopoCG/field_validation}

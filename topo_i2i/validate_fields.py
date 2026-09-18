@@ -28,6 +28,7 @@ import itertools
 import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import torch
@@ -141,17 +142,40 @@ def load(path: str, size: int) -> torch.Tensor:
     return torch.from_numpy(a).permute(2, 0, 1)[None] * 2 - 1
 
 
-def diagrams_for(paths, spec, combine, size, downsample, dims, invert, vectors=None):
+def _workers() -> int:
+    """How many threads to run persistence on.
+
+    THREADS, not processes: gudhi releases the GIL inside compute_persistence,
+    so this scales nearly linearly without pickling diagrams between processes.
+    A cell holds SLURM_CPUS_PER_TASK cores and used exactly one of them before.
+    """
+    n = os.environ.get("TOPO_WORKERS") or os.environ.get("SLURM_CPUS_PER_TASK")
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        n = os.cpu_count() or 1
+    return max(1, n)
+
+
+def diagrams_for(paths, spec, combine, size, downsample, dims, invert, vectors=None,
+                 workers=None):
     """One diagram per image for a given field spec (the expensive step)."""
     field = make_field(spec, combine, vectors=vectors)
-    out = []
-    for p in paths:
+
+    def one(p):
         x = load(p, size)
         if downsample > 1:
             x = torch.nn.functional.avg_pool2d(x, downsample)
         f = field(x)[0].double()
-        out.append(persistence_diagram(-f if invert else f, dims))
-    return out
+        return persistence_diagram(-f if invert else f, dims)
+
+    workers = _workers() if workers is None else workers
+    if workers <= 1 or len(paths) < 2:
+        return [one(p) for p in paths]
+    # ex.map preserves order, which matters: index i must be the same tile in
+    # every cached spec or the pairing silently shifts.
+    with ThreadPoolExecutor(workers) as ex:
+        return list(ex.map(one, paths))
 
 
 def auroc_se(a: float, n1: int, n2: int) -> float:

@@ -1476,3 +1476,35 @@ def test_the_overview_projection_panel_equals_the_distance(tmp_path):
         pb = np.sort(np.concatenate([pb, np.zeros(n - len(pb))]))
         total += np.abs(pa - pb).sum()
     assert total == pytest.approx(float(diagram_distance(a, b, (0, 1), None)), rel=1e-9)
+
+
+def test_threaded_diagrams_match_serial_and_keep_order(tmp_path):
+    """Threading the persistence loop must not change a single value, and must
+    preserve order -- index i has to be the same tile in every cached spec or
+    the true/shuffled pairing silently shifts."""
+    import numpy as np
+    from PIL import Image
+    from topo_i2i.validate_fields import diagrams_for
+    paths = []
+    for i in range(6):
+        p = tmp_path / ("t%d.png" % i)
+        arr = (np.random.default_rng(i).random((64, 64, 3)) * 255).astype("uint8")
+        Image.fromarray(arr).save(p)
+        paths.append(str(p))
+    serial = diagrams_for(paths, "gray", "sum", 64, 1, (0, 1), True, workers=1)
+    threaded = diagrams_for(paths, "gray", "sum", 64, 1, (0, 1), True, workers=4)
+    assert len(serial) == len(threaded) == len(paths)
+    for a, b in zip(serial, threaded):
+        for dim in (0, 1):
+            assert torch.equal(a[dim], b[dim])
+
+
+def test_worker_count_comes_from_the_slurm_allocation(monkeypatch):
+    from topo_i2i.validate_fields import _workers
+    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "8")
+    monkeypatch.delenv("TOPO_WORKERS", raising=False)
+    assert _workers() == 8
+    monkeypatch.setenv("TOPO_WORKERS", "3")
+    assert _workers() == 3, "TOPO_WORKERS must win, for a local run"
+    monkeypatch.setenv("TOPO_WORKERS", "nonsense")
+    assert _workers() >= 1, "a bad value must not crash the job"
