@@ -4,10 +4,9 @@
 #SBATCH --error=logs_topo/vs_%A_%a.err
 
 #SBATCH --time=48:00:00
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --partition=clara
-#SBATCH --exclude=clara[02,04-08]
+#SBATCH --partition=paula
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
 #SBATCH --array=0-12  # 13 cells; see _grid.sh for the grid

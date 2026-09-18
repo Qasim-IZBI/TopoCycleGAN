@@ -25,7 +25,8 @@ export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128
 # the GPU idles. Keep BLAS to one thread so it does not fight the dataloader.
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
-CPUS=${SLURM_CPUS_PER_TASK:-8}
+CPUS=${SLURM_CPUS_PER_TASK:-4}
+# One core for the training loop, one for persistence, the rest to the loader.
 NUM_WORKERS=$(( CPUS > 2 ? CPUS - 2 : 1 ))
 
 # -----------------------------
