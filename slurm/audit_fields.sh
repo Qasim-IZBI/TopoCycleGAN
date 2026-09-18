@@ -81,7 +81,11 @@ FIX_FIELDS_B=${FIX_FIELDS_B:-"hematoxylin/dab dab/hematoxylin hematoxylin+dab"}
 # Decode the array index: marker-major, then vectors, then control.
 # -----------------------------
 read -r -a MARKER_ARR <<< "$MARKERS"
-VECTOR_ARR=(estimated fixed)
+# Both arms by default. Drop to "estimated" for a stain combination the
+# literature table cannot express -- running a fixed arm against vectors that
+# are not on the slide does not test the literature, it just adds a wrong answer
+# the rule might then pick.
+read -r -a VECTOR_ARR <<< "${VECTOR_ARMS:-estimated fixed}"
 CONTROL_ARR=(strict unstratified)
 PER_MARKER=$(( ${#VECTOR_ARR[@]} * ${#CONTROL_ARR[@]} ))
 

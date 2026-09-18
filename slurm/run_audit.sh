@@ -45,8 +45,11 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 mkdir -p logs_topo "$AUDIT"
 
+VECTOR_ARMS=${VECTOR_ARMS:-"estimated fixed"}
 n_markers=$(echo "$MARKERS" | wc -w | tr -d ' ')
-last=$(( n_markers * 4 - 1 ))
+n_arms=$(echo "$VECTOR_ARMS" | wc -w | tr -d ' ')
+per_marker=$(( n_arms * 2 ))          # x {strict, unstratified}
+last=$(( n_markers * per_marker - 1 ))
 
 # The estimated-vector arm cannot run without vectors, so make them first if any
 # marker is missing them.
@@ -57,6 +60,7 @@ done
 
 common="MARKERS=${MARKERS},STAINS_DIR=${STAINS_DIR},AUDIT=${AUDIT}"
 common="${common},TILES=${TILES},TILES_BCI=${TILES_BCI},LIMIT=${LIMIT},SEED=${SEED}"
+common="${common},VECTOR_ARMS=${VECTOR_ARMS}"
 [ -n "${SLIDE_REGEX:-}" ] && common="${common},SLIDE_REGEX=${SLIDE_REGEX}"
 # Forward each marker's own tile root, and any field-grid override, explicitly
 # rather than relying on --export=ALL to carry them. ALL usually does, but a
@@ -85,10 +89,11 @@ fi
 
 array_jid=$(sbatch --parsable $dep --array=0-${last} \
                    --export="ALL,${common}" "$HERE/audit_fields.sh")
-echo "audit array: ${array_jid}  ($(( last + 1 )) cells: ${n_markers} markers x 4)"
+echo "audit array: ${array_jid}  ($(( last + 1 )) cells: ${n_markers} markers x ${per_marker})"
+echo "  vector arms: ${VECTOR_ARMS}"
 
 decide_jid=$(sbatch --parsable --dependency=afterany:${array_jid} \
-                    --export="ALL,AUDIT=${AUDIT},MARKERS=${MARKERS}" \
+                    --export="ALL,AUDIT=${AUDIT},MARKERS=${MARKERS},VECTOR_ARMS=${VECTOR_ARMS}" \
                     "$HERE/audit_decide.sh")
 echo "decision job: ${decide_jid}"
 

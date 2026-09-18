@@ -363,7 +363,7 @@ Then the audit, with VS's own tile root:
 export MARKERS=VS
 export TILES_VS=/work2/bz66izin-TopoCG/VS_tiles
 export AUDIT=/work2/bz66izin-TopoCG/field_audit_vs
-export FIX_FIELDS_B='sirius_red/hematoxylin hematoxylin/sirius_red hematoxylin+sirius_red'
+export VECTOR_ARMS=estimated
 bash run_audit.sh
 ```
 
@@ -371,11 +371,15 @@ bash run_audit.sh
 stain estimation and training all consult it — so a dataset tiled elsewhere
 needs no code change.
 
-**On Sirius Red vectors:** hematoxylin, eosin and DAB in `fields.STAIN_VECTORS`
-are QuPath's built-ins. `sirius_red` is not — it is a guess with no source
-behind it. On this dataset the audit's `fixed` arm is only as good as that
-number, so weigh the `estimated` arm more heavily, and report the estimated
-vectors rather than the table.
+**Run VS with `VECTOR_ARMS=estimated`.** Hematoxylin, eosin and DAB in
+`fields.STAIN_VECTORS` are QuPath's built-ins; `sirius_red` is not — it is a
+guess with no source. Worse, these are **picrosirius red** slides: Macenko on the
+real data returns a magenta-absorbing collagen vector and a **yellow** one
+(picric acid), 16.3° and 14.9° from that guess. There is no hematoxylin
+counterstain, so a `sirius_red/hematoxylin` spec deconvolves against a dye that
+is not on the slide. A fixed arm built from vectors the table cannot express does
+not test the literature — it adds a wrong answer the decision rule may then pick.
+`VECTOR_ARMS=estimated` drops it, halving the array.
 
 ## Estimating stain vectors
 

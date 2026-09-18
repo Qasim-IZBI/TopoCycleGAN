@@ -25,7 +25,8 @@ if command -v module >/dev/null 2>&1; then
 fi
 
 AUDIT=${AUDIT:-/work2/bz66izin-TopoCG/field_audit}
-topo-audit decide --dir "$AUDIT" ${MARKERS:+--markers $MARKERS}
+topo-audit decide --dir "$AUDIT" ${MARKERS:+--markers $MARKERS} \
+    ${VECTOR_ARMS:+--vectors $VECTOR_ARMS}
 
 echo
 echo "================================================================"
