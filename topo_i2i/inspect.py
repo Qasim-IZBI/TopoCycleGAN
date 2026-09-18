@@ -114,14 +114,21 @@ def make_figure(panels, dgms, dims, proj, outdir):
     ax.set_title("persistence diagrams", fontsize=9)
     ax.legend(fontsize=6)
 
-    # What the distance actually compares: the sorted projections, zero-padded.
+    # What the distance actually compares: the projections, zero-padded to a
+    # common length and THEN sorted -- the order diagram_distance uses. Sorting
+    # first and padding afterwards would draw a different picture entirely on a
+    # negated field, where every value is below the padding zeros: it would show
+    # the padding paired against the most persistent features instead of the
+    # least. The area between these curves is the distance, and the test suite
+    # pins that.
     ax = axes[2][1]
     for dim in dims:
         how = _resolve_projection(proj, dim)
-        pa = np.sort(_project(dgms["A"], dim, how).numpy())
-        pb = np.sort(_project(dgms["B"], dim, how).numpy())
+        pa = _project(dgms["A"], dim, how).numpy()
+        pb = _project(dgms["B"], dim, how).numpy()
         n = max(len(pa), len(pb))
-        pa = np.pad(pa, (n - len(pa), 0)); pb = np.pad(pb, (n - len(pb), 0))
+        pa = np.sort(np.concatenate([pa, np.zeros(n - len(pa))]))
+        pb = np.sort(np.concatenate([pb, np.zeros(n - len(pb))]))
         ax.plot(pa, label="A H%d (%s)" % (dim, how), lw=1)
         ax.plot(pb, label="B H%d (%s)" % (dim, how), lw=1, ls="--")
     ax.set_xlabel("rank"); ax.set_ylabel("projected value")

@@ -1446,3 +1446,33 @@ def test_literature_and_stains_are_mutually_exclusive(tmp_path):
     with pytest.raises(SystemExit):
         _run_argv(_inspect_argv(tmp_path, out, "--literature",
                                 "--stains", str(tmp_path / "nope.json")))
+
+
+def test_the_overview_projection_panel_equals_the_distance(tmp_path):
+    """The area between the two plotted curves must BE the diagram distance.
+
+    The panel pads then sorts, exactly as diagram_distance does. Sorting first
+    and padding afterwards -- the obvious reading -- draws a different picture
+    on a negated field, where every value lies below the padding zeros.
+    """
+    import numpy as np
+    import torch
+    from topo_i2i.losses import _project, _resolve_projection, diagram_distance
+    from topo_i2i.persistence import persistence_diagram
+
+    rng = np.random.default_rng(0)
+    # different sizes on purpose, so the padding actually does something
+    a = persistence_diagram(torch.from_numpy(-rng.random((40, 40))).double(), (0, 1))
+    b = persistence_diagram(torch.from_numpy(-rng.random((24, 24))).double(), (0, 1))
+    for dim in (0, 1):
+        assert a[dim].shape[0] != b[dim].shape[0], "sizes must differ to test padding"
+
+    total = 0.0
+    for dim in (0, 1):
+        how = _resolve_projection(None, dim)
+        pa, pb = _project(a, dim, how).numpy(), _project(b, dim, how).numpy()
+        n = max(len(pa), len(pb))
+        pa = np.sort(np.concatenate([pa, np.zeros(n - len(pa))]))
+        pb = np.sort(np.concatenate([pb, np.zeros(n - len(pb))]))
+        total += np.abs(pa - pb).sum()
+    assert total == pytest.approx(float(diagram_distance(a, b, (0, 1), None)), rel=1e-9)
