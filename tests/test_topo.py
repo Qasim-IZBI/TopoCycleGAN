@@ -678,6 +678,68 @@ def test_subdir_filter_keeps_tiles_and_drops_masks(tmp_path):
     assert filter_subdir(found, "nope") == []
 
 
+# --- comparison sheets ---------------------------------------------------- #
+
+def test_compare_label_may_contain_an_equals_sign():
+    """The cells want captioning as `lt=0.02 ...`, so the split is on the last =."""
+    from topo_i2i.compare import parse_pred
+    assert parse_pred("lt=0.02 cyc1 trans0=/preds/x") == ("lt=0.02 cyc1 trans0",
+                                                          "/preds/x")
+    assert parse_pred("baseline=/preds/b") == ("baseline", "/preds/b")
+    with pytest.raises(Exception):
+        parse_pred("no-separator-at-all")
+
+
+def test_compare_keeps_a_slot_for_a_cell_that_has_not_been_inferred(tmp_path):
+    """A cell still training must not shift every panel after it out of place."""
+    import os
+    from PIL import Image
+    from topo_i2i.compare import (compose, find_match, index_by_stem, list_tiles)
+
+    a = tmp_path / "valA"
+    a.mkdir()
+    for name in ("s1_r0c0.tif", "s1_r0c1.tif"):
+        Image.new("RGB", (8, 8)).save(a / name)
+    trained = tmp_path / "preds" / "cell0"
+    trained.mkdir(parents=True)
+    Image.new("RGB", (8, 8)).save(trained / "s1_r0c0.tif")
+    untrained = tmp_path / "preds" / "cell1"
+    untrained.mkdir()
+
+    assert list_tiles(str(a)) == ["s1_r0c0.tif", "s1_r0c1.tif"]
+    done = index_by_stem(str(trained))
+    assert find_match("s1_r0c0", *done) is not None
+    assert find_match("s1_r0c1", *done) is None          # inferred, but not this tile
+    assert find_match("s1_r0c0", *index_by_stem(str(untrained))) is None
+
+    # Every panel keeps its place whether or not it has an image: 15 slots at
+    # three columns is five rows either way.
+    full = compose([("c%d" % i, Image.new("RGB", (64, 64)), i < 2)
+                    for i in range(15)], cols=3, size=64, title="t")
+    holes = compose([("c%d" % i, None, i < 2) for i in range(15)],
+                    cols=3, size=64, title="t")
+    assert full.size == holes.size
+    assert full.size[0] == 3 * 64 + 4 * 4                # cols * size + pad
+
+
+def test_compare_subdir_keeps_tiles_and_drops_masks(tmp_path):
+    """The same per-case layout topo-infer has to filter, filtered the same way."""
+    import os
+    from PIL import Image
+    from topo_i2i.compare import list_tiles
+
+    for case in ("001", "012"):
+        for sub in ("images", "masks"):
+            d = tmp_path / case / sub
+            d.mkdir(parents=True)
+            Image.new("RGB", (8, 8)).save(d / "0001248.tif")
+
+    assert len(list_tiles(str(tmp_path))) == 4
+    kept = list_tiles(str(tmp_path), "images")
+    assert kept == [os.path.join("001", "images", "0001248.tif"),
+                    os.path.join("012", "images", "0001248.tif")]
+
+
 # --- per-channel cycle topology ------------------------------------------ #
 
 def test_split_specs():

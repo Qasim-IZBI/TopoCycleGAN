@@ -29,6 +29,7 @@ dev = ["pytest>=7.4"]
 topo-train = "topo_i2i.train:main"
 topo-crop = "topo_i2i.crop:main"
 topo-infer = "topo_i2i.inference:main"
+topo-compare = "topo_i2i.compare:main"
 topo-validate-fields = "topo_i2i.validate_fields:main"
 topo-estimate-stains = "topo_i2i.stains:main"
 topo-inspect = "topo_i2i.inspect:main"
