@@ -44,6 +44,15 @@ CELLS=(
   "0.2:1:1"
 )
 
+# A submitter's --export=ALL,LAMBDA_TOPO=... overrides the cell. Remember that
+# override once, here, rather than reading it back off LAMBDA_TOPO inside
+# grid_select: the first call would otherwise assign the cell's own value and
+# every later call would treat it as an override, so a loop over the grid --
+# which is how compare.sh enumerates the cells -- would report task 0's weight
+# for all 13. One array task calling grid_select once never saw it.
+_GRID_LAMBDA_TOPO=${LAMBDA_TOPO:-}
+_GRID_LAMBDA_CYCLE=${LAMBDA_CYCLE:-}
+
 grid_select() {
     local id=$1
     if ! (( id < ${#CELLS[@]} )); then
@@ -51,8 +60,8 @@ grid_select() {
         return 1
     fi
     IFS=: read -r CELL_TOPO PH_CYC PH_TRANS <<< "${CELLS[$id]}"
-    LAMBDA_CYCLE=${LAMBDA_CYCLE:-10}
-    LAMBDA_TOPO=${LAMBDA_TOPO:-$CELL_TOPO}
+    LAMBDA_CYCLE=${_GRID_LAMBDA_CYCLE:-10}
+    LAMBDA_TOPO=${_GRID_LAMBDA_TOPO:-$CELL_TOPO}
     RUN_NAME="${MARKER}_lt${LAMBDA_TOPO}_cyc${PH_CYC}_trans${PH_TRANS}"
     if [ "$PH_CYC" = "0" ] && [ "$PH_TRANS" = "0" ]; then
         RUN_NAME="${MARKER}_baseline_cyclegan"
