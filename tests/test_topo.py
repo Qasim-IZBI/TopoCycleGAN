@@ -651,6 +651,33 @@ def test_inference_forward_produces_a_valid_tile(tmp_path):
     assert Image.open(out).size == (32, 32)
 
 
+def test_subdir_filter_keeps_tiles_and_drops_masks(tmp_path):
+    """A raw per-case tiling carries masks beside the tiles; the loader walks both."""
+    import os
+    from PIL import Image
+    from i2i_stain_zoo.datasets.common import list_images
+    from topo_i2i.inference import filter_subdir
+
+    for case in ("001", "002"):
+        for sub in ("images", "masks"):
+            d = tmp_path / case / sub
+            d.mkdir(parents=True)
+            for tile in ("0001248", "0001249"):
+                Image.new("RGB", (4, 4)).save(d / (tile + ".tif"))
+
+    found = list_images(str(tmp_path))
+    assert len(found) == 8                      # the walk takes the masks too
+    kept = filter_subdir(found, "images")
+    assert len(kept) == 4
+    assert not any(os.sep + "masks" + os.sep in p for p in kept)
+
+    # Names stay unique across cases: inference writes the path relative to
+    # --data, so a tile id repeated in another case does not overwrite it.
+    stems = [os.path.relpath(p, str(tmp_path)) for p in kept]
+    assert len(set(stems)) == len(stems)
+    assert filter_subdir(found, "nope") == []
+
+
 # --- per-channel cycle topology ------------------------------------------ #
 
 def test_split_specs():

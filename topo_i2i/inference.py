@@ -9,6 +9,11 @@ class, and otherwise follows the zoo's conventions -- same transform, same
 
     topo-infer --ckpt runs/.../checkpoints/step_400000.pt \
                --data tiles/ER/TrainValAB/valA --outdir preds/valA --direction A2B
+
+Tiles are found recursively and written under the same relative path, so a
+nested <case>/images/<id>.tif layout comes back out as <case>/images/<id>.tif
+and ids repeated across cases do not collide. That recursion also picks up a
+sibling <case>/masks/ -- use --subdir images to keep the masks out.
 """
 
 from __future__ import annotations
@@ -58,6 +63,17 @@ def load_model(ckpt_path: str, device) -> TopoCycleGAN:
     return model
 
 
+def filter_subdir(paths, subdir: str):
+    """Keep only tiles whose immediate parent directory is named `subdir`.
+
+    WSI tiling writes <case>/images/<id>.tif next to <case>/masks/<id>.tif, and
+    the zoo's loader walks the whole tree -- without this it would translate the
+    masks too, doubling the work and salting the output with predictions made
+    from binary images.
+    """
+    return [p for p in paths if os.path.basename(os.path.dirname(p)) == subdir]
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -70,6 +86,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=0,
                    help="stop after this many tiles (0 = all); useful for a quick look")
     p.add_argument("--ext", default=".tif", help="output extension")
+    p.add_argument("--subdir", default="",
+                   help="only use tiles whose parent directory has this name, "
+                        "e.g. 'images' for a <case>/images/<id>.tif layout; "
+                        "default: every image under --data")
     p.add_argument("--resume", action="store_true",
                    help="skip tiles that already exist in --outdir")
     return p
@@ -82,6 +102,15 @@ def main() -> None:
 
     dataset = SingleDomainDataset(args.data,
                                   transform=default_train_transform(args.image_size))
+    if args.subdir:
+        found = len(dataset.paths)
+        dataset.paths = filter_subdir(dataset.paths, args.subdir)
+        if not dataset.paths:
+            raise SystemExit("no tiles under %s have a parent directory named %r "
+                             "(%d images found, all filtered out)"
+                             % (args.data, args.subdir, found))
+        print("[data] %d of %d images are in a %r directory"
+              % (len(dataset.paths), found, args.subdir))
     loader = DataLoader(dataset, batch_size=1, shuffle=False)
     os.makedirs(args.outdir, exist_ok=True)
 
