@@ -12,12 +12,33 @@
 # No --gres: the models already ran. This only reads their output.
 
 # One sheet per tile: the H&E that went in, the real IHC/SR where it exists,
-# and what all 13 sweep cells made of it, side by side.
+# and what every sweep cell made of it, side by side.
 #
 # Run it after infer_sweep.sh. The cells come from _grid.sh, the same list
 # training and inference resolve, so a cell cannot be left off the sheet by
 # accident -- and one that has not been inferred yet keeps its slot, labelled,
 # rather than shifting every panel after it.
+#
+# ARMS is how the two cycle-topology sweeps land on one sheet: a space-
+# separated list of <label>=<output root>, taken in order. The default is the
+# merged-field sweep in Outputs_<marker> followed by the per-channel one in
+# Outputs_<marker>_cycsplit, which is 23 panels -- and at three columns the
+# first arm fills exactly five rows, so the second starts on a row boundary.
+#
+#   ARMS="merged=/work2/.../Outputs_er" compare.sh   # one arm, as before
+#
+# Only the FIRST arm contributes all 13 cells. Every later one contributes
+# EXTRA_ARM_CELLS, which defaults to the 8 cells where ph_cyc is on -- the
+# split arm's other five are bit-for-bit the merged arm's, so putting them up
+# twice would just pad the sheet. Set EXTRA_ARM_CELLS="$(seq 0 12)" to show a
+# later arm in full.
+#
+# The split arm has to be INFERRED into its own root before any of it can be
+# sheeted; infer_sweep.sh defaults BASE to Outputs_<marker>, so it needs the
+# root passing explicitly:
+#
+#   sbatch --export=ALL,MARKER=ER,BASE=/work2/bz66izin-TopoCG/Outputs_er_cycsplit \
+#          --array=2,3,5,6,8,9,11,12 infer_sweep.sh
 #
 #   mkdir -p logs_topo                      # SLURM will not create it for you
 #   sbatch compare.sh                                   # 4 MIST markers
@@ -79,6 +100,10 @@ SAMPLE=${SAMPLE:-random}
 PANEL=${PANEL:-256}
 COLS=${COLS:-3}
 SUBDIR=${SUBDIR:-}
+# Cells taken from each arm after the first. ph_cyc_split cannot change a cell
+# whose ph_cyc is 0, so those five are shared with the first arm rather than
+# missing from this one.
+EXTRA_ARM_CELLS=${EXTRA_ARM_CELLS:-"2 3 5 6 8 9 11 12"}
 # Set INPUT to sheet a directory that was never linked into TrainValAB. The
 # truth is then whatever TRUTH says, if anything.
 INPUT=${INPUT:-}
@@ -90,6 +115,10 @@ for MARKER in $MARKERS; do
   (
     MARKER_LC=$(echo "$MARKER" | tr 'A-Z' 'a-z')
     BASE=${BASE:-/work2/bz66izin-TopoCG/Outputs_${MARKER_LC}}
+    SPLIT_BASE=${SPLIT_BASE:-/work2/bz66izin-TopoCG/Outputs_${MARKER_LC}_cycsplit}
+    # Resolved here, inside the per-marker subshell, because both roots are
+    # named after the marker.
+    arms=${ARMS:-"merged=${BASE} split=${SPLIT_BASE}"}
     root="$(tiles_root "$MARKER")"
 
     dir_a=${INPUT:-${root}/${MARKER}/TrainValAB/${SPLIT}}
@@ -98,19 +127,13 @@ for MARKER in $MARKERS; do
     # is still worth having.
     dir_b=${TRUTH:-${root}/${MARKER}/TrainValAB/${SPLIT%A}B}
 
-    # Where infer_sweep.sh put this split's predictions.
-    if [ "$SPLIT" = "valA" ]; then
-        preds_root="${BASE}/preds"
-    else
-        preds_root="${BASE}/preds_${SPLIT}"
-    fi
+    # Where infer_sweep.sh put a given arm's predictions for this split.
+    preds_root_of() {
+        if [ "$SPLIT" = "valA" ]; then echo "$1/preds"; else echo "$1/preds_${SPLIT}"; fi
+    }
 
     if [ ! -d "$dir_a" ]; then
         echo "[skip] ${MARKER}: input ${dir_a} is missing"
-        exit 0
-    fi
-    if [ ! -d "$preds_root" ]; then
-        echo "[skip] ${MARKER}: no predictions under ${preds_root} -- run infer_sweep.sh first"
         exit 0
     fi
 
@@ -122,31 +145,61 @@ for MARKER in $MARKERS; do
         truth_note="none (${dir_b} is not there)"
     fi
 
-    # One --pred per cell, in grid order. At three columns that puts the input,
-    # the truth and the baseline on the first row, then one lambda_topo decade
-    # per row -- so reading down a column holds the PH terms fixed and sweeps
-    # the weight, and reading across a row does the opposite.
+    # One --pred per cell, in grid order, for each arm in turn. At three
+    # columns the first arm puts the input, the truth and the baseline on row
+    # one and then one lambda_topo decade per row -- so reading down a column
+    # holds the PH terms fixed and sweeps the weight, and reading across a row
+    # does the opposite. That is 15 panels, exactly five rows, so a second arm
+    # starts on a row boundary instead of wrapping into the first one's last.
+    n_arms=0
+    for arm in $arms; do n_arms=$((n_arms + 1)); done
+
     pred_args=()
-    n_cells=0 n_ready=0
-    for task in $(seq 0 12); do
-        grid_select "$task"
-        if [ "$PH_CYC" = "0" ] && [ "$PH_TRANS" = "0" ]; then
-            label="baseline (CycleGAN)"
-        else
-            # No "=" in the label: --pred splits on the last one, and a
-            # caption is easier to read without it anyway.
-            label="lt ${LAMBDA_TOPO}  cyc${PH_CYC} trans${PH_TRANS}"
-        fi
-        pred_args+=(--pred "${label}=${preds_root}/${RUN_NAME}")
-        n_cells=$((n_cells + 1))
-        [ -d "${preds_root}/${RUN_NAME}" ] && n_ready=$((n_ready + 1))
+    n_cells=0 n_ready=0 arm_i=0 roots_found=0 arm_note=""
+    for arm in $arms; do
+        arm_label="${arm%%=*}"          # first "=" splits label from root; the
+        arm_base="${arm#*=}"            # root may contain further ones
+        arm_i=$((arm_i + 1))
+        arm_preds="$(preds_root_of "$arm_base")"
+        [ -d "$arm_preds" ] && roots_found=$((roots_found + 1))
+        arm_note="${arm_note}
+    ${arm_label}  ${arm_preds}$( [ -d "$arm_preds" ] || echo "   (not inferred yet)" )"
+
+        # The first arm is the reference and shows the whole grid; a later one
+        # shows only the cells it can actually differ in.
+        if [ "$arm_i" = "1" ]; then cells=$(seq 0 12); else cells="$EXTRA_ARM_CELLS"; fi
+
+        for task in $cells; do
+            grid_select "$task"
+            if [ "$PH_CYC" = "0" ] && [ "$PH_TRANS" = "0" ]; then
+                label="baseline (CycleGAN)"
+            else
+                # No "=" in the label: --pred splits on the last one, and a
+                # caption is easier to read without it anyway.
+                label="lt ${LAMBDA_TOPO}  cyc${PH_CYC} trans${PH_TRANS}"
+            fi
+            # Name the arm on the panel only when there is more than one, so a
+            # single-arm sheet reads exactly as it did before.
+            [ "$n_arms" = "1" ] || label="[${arm_label}] ${label}"
+            pred_args+=(--pred "${label}=${arm_preds}/${RUN_NAME}")
+            n_cells=$((n_cells + 1))
+            [ -d "${arm_preds}/${RUN_NAME}" ] && n_ready=$((n_ready + 1))
+        done
     done
+
+    # Every arm missing means nothing has been inferred for this marker at all.
+    # One missing arm is ordinary -- its panels say so on the sheet.
+    if [ "$roots_found" = "0" ]; then
+        echo "[skip] ${MARKER}: no predictions under any arm -- run infer_sweep.sh first"
+        echo "       looked in:${arm_note}"
+        exit 0
+    fi
 
     echo
     echo "================ ${MARKER} ================"
     echo "  input   ${dir_a}${SUBDIR:+  (only */${SUBDIR}/)}"
     echo "  truth   ${truth_note}"
-    echo "  preds   ${preds_root}"
+    echo "  arms    ${n_arms}:${arm_note}"
     echo "  cells   ${n_ready} of ${n_cells} inferred so far"
     echo "  sheets  ${SHEETS} tiles, ${SAMPLE} (seed ${SEED})"
 
