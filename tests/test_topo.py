@@ -678,6 +678,40 @@ def test_subdir_filter_keeps_tiles_and_drops_masks(tmp_path):
     assert filter_subdir(found, "nope") == []
 
 
+# --- baseline training wrapper -------------------------------------------- #
+
+def test_baseline_train_resumes_before_training():
+    """The zoo's CLI omits resume_if_exists; topo-baseline exists to supply it."""
+    pytest.importorskip("i2i_stain_zoo.trainer.base_trainer")
+    from i2i_stain_zoo.trainer.base_trainer import BaseTrainer
+    from topo_i2i.baseline_train import _train_resuming
+
+    # The wrapper must call resume first, then the ORIGINAL train, forwarding
+    # the step count. Patch a stand-in rather than build a real trainer, which
+    # would want a model, a loader and a GPU.
+    calls = []
+
+    class Stand:
+        def resume_if_exists(self):
+            calls.append("resume")
+
+        def train(self, total_steps):
+            calls.append(("train", total_steps))
+
+    original = _train_resuming.__wrapped__
+    try:
+        _train_resuming.__wrapped__ = Stand.train
+        Stand.train = _train_resuming
+        Stand().train(400000)
+    finally:
+        _train_resuming.__wrapped__ = original
+
+    assert calls == ["resume", ("train", 400000)]
+    # And the real method is what the wrapper delegates to by default, so
+    # patching it in main() cannot silently become a no-op.
+    assert _train_resuming.__wrapped__ is BaseTrainer.train
+
+
 # --- comparison sheets ---------------------------------------------------- #
 
 def test_compare_label_may_contain_an_equals_sign():

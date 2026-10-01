@@ -49,20 +49,22 @@
 #    ~4.5x and large ~9x the per-step cost of small. 400k steps do not fit in
 #    one 48h slot at either size, and probably not at 2 slots for large.
 #
-# 2. NO RESUME. i2i-train never calls resume_if_exists(), unlike topo-train, so
-#    a job killed at the wall restarts at step 0 and overwrites what it wrote.
-#    --init_ckpt is not a resume: it restores no optimiser state and resets the
-#    step counter. This script refuses to start on top of existing checkpoints
-#    rather than destroy them.
+# 2. THE WALL, which is survivable. Trained through topo-baseline rather than
+#    i2i-train directly: the two are the same CLI and the same code, except
+#    that topo-baseline calls resume_if_exists() first, which the zoo's entry
+#    point omits. So a job killed at 48h is resumed by submitting THE SAME LINE
+#    AGAIN -- model, both optimisers, the step counter and the elapsed-time
+#    total all come back from the furthest-ahead checkpoint, and step_latest.pt
+#    is written every LOG_STEPS, so at most that many steps are repeated.
 #
-#    Together those mean you cannot simply submit `large` for 400k steps and
-#    collect it later. Choose a STEPS budget the LARGEST arm can finish inside
-#    one slot and train EVERY arm at it -- baselines included, and ideally the
-#    method too, or the comparison is between a converged model and a truncated
-#    one and the capacity ladder tells you nothing. Say what the budget was in
-#    the paper.
+#    A `large` arm therefore reaches 400k over several slots rather than
+#    needing to fit in one. Resubmit until the log says it reached STEPS:
 #
-#      STEPS=100000 MODEL=cyclegan SIZE=large MARKER=ER sbatch ... train_baseline.sh
+#      until grep -q "Done:" logs_topo/baseline_<jobid>.out; do ...resubmit...; done
+#
+#    Keep STEPS equal across every arm you intend to compare. The capacity
+#    ladder only means something if the rungs got the same budget, and the
+#    temptation when large is slow is to quietly give it less.
 #
 # Output: ${BASE}/results/${MARKER}_${MODEL}_${SIZE}/{checkpoints,samples}
 
@@ -142,16 +144,18 @@ if [ ! -d "$DATA_A" ] || [ ! -d "$DATA_B" ]; then
     exit 1
 fi
 
-# i2i-train starts at step 0 whatever is in save_dir, so a second submit would
-# quietly overwrite a finished or part-finished run. Refuse instead.
+# Existing checkpoints are resumed from, not overwritten -- topo-baseline calls
+# resume_if_exists(). Report what is there so the log says which slot this is.
 shopt -s nullglob
 existing=( "${OUTPUT}/checkpoints"/*.pt )
-if (( ${#existing[@]} )) && [ "${RESTART:-0}" != "1" ]; then
-    echo "ERROR: ${OUTPUT}/checkpoints already holds ${#existing[@]} checkpoint(s)." >&2
-    echo "i2i-train does not resume -- it would restart at step 0 and overwrite them." >&2
-    echo "  to keep them:    BASE=... or RUN_NAME=... to train elsewhere" >&2
-    echo "  to discard them: resubmit with RESTART=1" >&2
-    exit 1
+if (( ${#existing[@]} )); then
+    if [ "${RESTART:-0}" = "1" ]; then
+        echo "RESTART=1: discarding ${#existing[@]} checkpoint(s) under ${OUTPUT}/checkpoints"
+        rm -f "${OUTPUT}/checkpoints"/*.pt
+    else
+        echo "resuming: ${#existing[@]} checkpoint(s) already under ${OUTPUT}/checkpoints"
+        echo "  (RESTART=1 would discard them and train from step 0 instead)"
+    fi
 fi
 
 mkdir -p "$OUTPUT"
@@ -184,6 +188,8 @@ else
 fi
 
 # The capacity on the record, next to the result, rather than assumed later.
+# --count_params exits before training, so either entry point does; use the
+# zoo's, since nothing is being resumed here.
 i2i-train --model "$MODEL" --count_params "${size_args[@]}" || true
 
 run_cmd() {
@@ -193,8 +199,10 @@ run_cmd() {
     "$@"
 }
 
-# Note the underscores: i2i-train spells its flags differently from topo-train.
-run_cmd i2i-train \
+# topo-baseline, not i2i-train: same CLI and same code, plus the
+# resume_if_exists() the zoo's entry point leaves out. Note the underscores --
+# these flags are i2i-train's, which spells them differently from topo-train.
+run_cmd topo-baseline \
     --model "$MODEL" \
     --dataA "$DATA_A" \
     --dataB "$DATA_B" \

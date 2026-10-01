@@ -35,6 +35,7 @@ topo-estimate-stains = "topo_i2i.stains:main"
 topo-inspect = "topo_i2i.inspect:main"
 topo-audit = "topo_i2i.audit:main"
 topo-worst-field = "topo_i2i.worst_field:main"
+topo-baseline = "topo_i2i.baseline_train:main"
 
 [tool.setuptools.packages.find]
 include = ["topo_i2i*"]
