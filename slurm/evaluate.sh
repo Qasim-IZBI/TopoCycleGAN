@@ -93,12 +93,15 @@ if [ "${1:-}" = "summary" ]; then
     fi
     # FID's CSV is metric,value,n_real,n_fake; the paired metrics end on a
     # MEAN row. Missing ones print as "-" so a half-finished array still reads.
+    # The zoo writes these with csv.DictWriter, whose lines end in \r\n -- strip
+    # the \r, or it rides along into the table and each value's carriage return
+    # overwrites the start of the row when printed.
     value_of() {
         local csv="$1"
         [ -f "$csv" ] || { echo "-"; return; }
         case "$csv" in
-            */fid.csv) awk -F, 'NR==2 { print $2 }' "$csv" ;;
-            *)         awk -F, '$1=="MEAN" { print $2 }' "$csv" ;;
+            */fid.csv) tr -d '\r' < "$csv" | awk -F, 'NR==2 { print $2 }' ;;
+            *)         tr -d '\r' < "$csv" | awk -F, '$1=="MEAN" { print $2 }' ;;
         esac
     }
     out="${EVAL_DIR}/summary.csv"
