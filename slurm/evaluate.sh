@@ -10,39 +10,62 @@
 #SBATCH --exclude=clara[02,04-08]
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
-#SBATCH --array=0-14  # 13 TopoCycleGAN cells + 2 small baselines; see below
+#SBATCH --array=0-14  # ARM=main: 13 TopoCycleGAN cells + 2 small baselines
 
 # FID, patch SSIM and LPIPS of one set of predictions against the ground truth,
 # through the zoo's own i2i-evaluate -- the same metric code the zoo's paper
 # reports, not a copy of it. Every model is scored the same way; only the
 # prediction directory changes.
 #
-# ONE ARRAY PER DATASET. Task N of a MARKER scores:
+# ONE ARRAY PER DATASET AND ARM. ARM picks which trained models task N means:
 #
-#   0-12  the TopoCycleGAN sweep in Outputs_<marker>, one task per _grid.sh
-#         cell -- the audit's best field across the lambda_topo / ph_cyc /
-#         ph_trans grid. Task 0 is that sweep's vanilla CycleGAN cell.
-#   13    cyclegan small   (Outputs_<marker>_cyclegan_small)
-#   14    dclgan   small   (Outputs_<marker>_dclgan_small)
+#   ARM=main (default)       --array=0-14
+#     0-12  the TopoCycleGAN sweep in Outputs_<marker>, one task per _grid.sh
+#           cell: the audit's best field, merged ph_cyc. Task 0 is that
+#           sweep's vanilla CycleGAN cell.
+#     13    cyclegan small   (Outputs_<marker>_cyclegan_small)
+#     14    dclgan   small   (Outputs_<marker>_dclgan_small)
+#
+#   ARM=cycsplit             --array=2,3,5,6,8,9,11,12
+#     the per-channel ph_cyc sweep in Outputs_<marker>_cycsplit. Only the
+#     ph_cyc=1 cells were trained; the others are main's, bit for bit.
+#
+#   ARM=worstfield_cycmerged --array=1-12
+#   ARM=worstfield_cycsplit  --array=2,3,5,6,8,9,11,12
+#     the field audit's negative control, Outputs_<marker>_worstfield_<variant>.
+#     No cell 0: the baseline touches no field, so main's stands for both.
+#
+#   ARM=baselines            --array=0-5
+#     0-2 cyclegan small/medium/large, 3-5 dclgan small/medium/large
+#     (Outputs_<marker>_<model>_<size>), as train_baseline.sh named them.
+#
+# A task its arm did not train exits clean with a note, so --array=0-12 is
+# also safe for any arm -- the lists above just avoid the empty jobs.
 #
 #   mkdir -p logs_topo
-#   sbatch --export=ALL,MARKER=ER   evaluate.sh
-#   sbatch --export=ALL,MARKER=Ki67 evaluate.sh
-#   sbatch --export=ALL,MARKER=BCI  evaluate.sh
+#   sbatch --export=ALL,MARKER=ER evaluate.sh
+#   sbatch --export=ALL,MARKER=ER,ARM=cycsplit --array=2,3,5,6,8,9,11,12 evaluate.sh
+#   sbatch --export=ALL,MARKER=ER,ARM=worstfield_cycmerged --array=1-12 evaluate.sh
+#   sbatch --export=ALL,MARKER=ER,ARM=worstfield_cycsplit \
+#          --array=2,3,5,6,8,9,11,12 evaluate.sh
+#   sbatch --export=ALL,MARKER=ER,ARM=baselines --array=0-5 evaluate.sh
 #   sbatch --export=ALL,MARKER=BCI,SPLIT=testA evaluate.sh
-#   sbatch --export=ALL,MARKER=ER --array=13,14 evaluate.sh     # baselines only
 #
-# Then, once the array is done, one table per dataset (no sbatch, no GPU):
+# Then, once the arrays are done, one table per dataset with every arm in it
+# (no sbatch, no GPU):
 #
 #   MARKER=ER bash evaluate.sh summary
 #
-# ANY OTHER PAIR OF DIRECTORIES -- the worst-field arm, a medium baseline, a
-# test split nobody planned for -- goes through the same path with PRED, NAME
-# and (optionally) TRUTH set, and lands in the same summary:
+# ANY OTHER PAIR OF DIRECTORIES goes through the same path with PRED and NAME
+# set (and TRUTH if it is not the registered partner split). It is filed under
+# ARM=custom unless ARM says otherwise:
 #
-#   sbatch --array=0 --export=ALL,MARKER=ER,NAME=ER_dclgan_medium,\
-#       PRED=/work2/bz66izin-TopoCG/Outputs_er_dclgan_medium/preds/ER_dclgan_medium \
+#   sbatch --array=0 --export=ALL,MARKER=ER,NAME=ER_mything,PRED=/path/to/preds \
 #       evaluate.sh
+#
+# Every arm reuses the grid's run names (ER_lt0.002_cyc1_trans1 exists in main,
+# cycsplit and both worstfield arms), which is why results are filed per arm:
+# under one directory a second arm would find the first one's CSVs and skip.
 #
 # THE METRICS
 #   fid         unpaired: InceptionV3 pool3 statistics of all predictions vs all
@@ -69,7 +92,7 @@
 # Paired metrics need a registered truth: VS has none, so for VS set
 # METRICS=fid and TRUTH to a directory of real target tiles.
 #
-# Output: ${EVAL_ROOT}/<marker>/<split>/<name>/{fid,patch_ssim,lpips}.csv
+# Output: ${EVAL_ROOT}/<marker>/<split>/<arm>/<name>/{fid,patch_ssim,lpips}.csv
 #         ${EVAL_ROOT}/<marker>/<split>/summary.csv   (from `summary`)
 
 set -eo pipefail
@@ -84,12 +107,23 @@ MARKER_LC=$(echo "$MARKER" | tr 'A-Z' 'a-z')
 EVAL_DIR="${EVAL_ROOT}/${MARKER}/${SPLIT}"
 
 # -----------------------------
-# summary: one row per scored model, read off the CSVs i2i-evaluate wrote
+# summary: one row per scored model, every arm, read off i2i-evaluate's CSVs
 # -----------------------------
 if [ "${1:-}" = "summary" ]; then
     if [ ! -d "$EVAL_DIR" ]; then
         echo "nothing evaluated under ${EVAL_DIR} yet" >&2
         exit 1
+    fi
+    # Results from before the per-arm layout sit directly under the split.
+    # They are all ARM=main; say how to file them rather than mislabel them.
+    shopt -s nullglob
+    legacy=( "${EVAL_DIR}"/*/fid.csv "${EVAL_DIR}"/*/patch_ssim.csv "${EVAL_DIR}"/*/lpips.csv )
+    if (( ${#legacy[@]} )); then
+        echo "NOTE: results from before the per-arm layout are under ${EVAL_DIR}/<name>/." >&2
+        echo "      They are all ARM=main. File them once with:" >&2
+        echo "        cd ${EVAL_DIR} && mkdir -p main && for d in ${MARKER}_*/; do mv \"\$d\" main/; done" >&2
+        echo "      They are left out of this table until then." >&2
+        echo >&2
     fi
     # FID's CSV is metric,value,n_real,n_fake; the paired metrics end on a
     # MEAN row. Missing ones print as "-" so a half-finished array still reads.
@@ -105,10 +139,20 @@ if [ "${1:-}" = "summary" ]; then
         esac
     }
     out="${EVAL_DIR}/summary.csv"
-    echo "name,fid,patch_ssim,lpips" > "$out"
-    for d in "${EVAL_DIR}"/*/; do
-        name=$(basename "$d")
-        echo "${name},$(value_of "${d}fid.csv"),$(value_of "${d}patch_ssim.csv"),$(value_of "${d}lpips.csv")" >> "$out"
+    echo "arm,name,fid,patch_ssim,lpips" > "$out"
+    # Arms in a fixed order, so the table reads main first and the controls
+    # after it; anything else (custom, a new arm) follows alphabetically.
+    known="main cycsplit worstfield_cycmerged worstfield_cycsplit baselines"
+    arms="$known"
+    for a in "${EVAL_DIR}"/*/; do
+        a=$(basename "$a")
+        case " $known " in *" $a "*) ;; *) [ -f "${EVAL_DIR}/${a}/fid.csv" ] || arms="$arms $a" ;; esac
+    done
+    for arm in $arms; do
+        for d in "${EVAL_DIR}/${arm}"/*/; do
+            name=$(basename "$d")
+            echo "${arm},${name},$(value_of "${d}fid.csv"),$(value_of "${d}patch_ssim.csv"),$(value_of "${d}lpips.csv")" >> "$out"
+        done
     done
     echo "${MARKER} / ${SPLIT}   (fid lower, patch_ssim higher, lpips lower is better)"
     column -s, -t < "$out"
@@ -124,31 +168,75 @@ preds_root_of() {
     if [ "$SPLIT" = "valA" ]; then echo "$1/preds"; else echo "$1/preds_${SPLIT}"; fi
 }
 
+# A task the arm never trained is not a failure: exit clean, say why.
+not_in_arm() {
+    echo "ARM=${ARM} task ${TASK_ID}: $1 -- nothing to evaluate"
+    exit 0
+}
+
 if [ -n "${PRED:-}" ]; then
     NAME=${NAME:?PRED is set -- set NAME too, it names the output directory}
+    ARM=${ARM:-custom}
 else
+    ARM=${ARM:-main}
     TASK_ID=${SLURM_ARRAY_TASK_ID:?submit with sbatch, or set PRED and NAME}
     SLURM_DIR=${REPO:-${SLURM_SUBMIT_DIR:-$PWD}}
     [ -f "${SLURM_DIR}/_grid.sh" ] || SLURM_DIR="${SLURM_DIR}/slurm"
     source "${SLURM_DIR}/_grid.sh"
     n_cells=${#CELLS[@]}
 
-    if (( TASK_ID < n_cells )); then
+    # grid_cell <root>: task N is grid cell N of the sweep under <root>.
+    grid_cell() {
+        (( TASK_ID < n_cells )) || not_in_arm "past the ${n_cells}-cell grid"
         grid_select "$TASK_ID"
         NAME="$RUN_NAME"
-        PRED="$(preds_root_of "${ROOT}/Outputs_${MARKER_LC}")/${RUN_NAME}"
-    else
-        BASELINES=( "cyclegan:small" "dclgan:small" )
-        i=$(( TASK_ID - n_cells ))
-        if (( i >= ${#BASELINES[@]} )); then
-            echo "ERROR: task ${TASK_ID} is past the last baseline (task $(( n_cells + ${#BASELINES[@]} - 1 )))" >&2
+        PRED="$(preds_root_of "$1")/${RUN_NAME}"
+    }
+    # baseline_run <model> <size>: one train_baseline.sh run.
+    baseline_run() {
+        NAME="${MARKER}_$1_$2"
+        PRED="$(preds_root_of "${ROOT}/Outputs_${MARKER_LC}_$1_$2")/${NAME}"
+    }
+
+    case "$ARM" in
+        main)
+            if (( TASK_ID < n_cells )); then
+                grid_cell "${ROOT}/Outputs_${MARKER_LC}"
+            else
+                case $(( TASK_ID - n_cells )) in
+                    0) baseline_run cyclegan small ;;
+                    1) baseline_run dclgan   small ;;
+                    *) not_in_arm "past the last task ($(( n_cells + 1 )))" ;;
+                esac
+            fi
+            ;;
+        cycsplit|worstfield_cycmerged|worstfield_cycsplit)
+            grid_cell "${ROOT}/Outputs_${MARKER_LC}_${ARM}"
+            # Mirror what the training scripts skip: no arm here trains the
+            # field-free cell 0, and a split arm trains no ph_cyc=0 cell.
+            [ "$TASK_ID" = "0" ] && not_in_arm "cell 0 is field-free; ARM=main has it"
+            case "$ARM" in *cycsplit)
+                [ "$PH_CYC" = "0" ] && not_in_arm "ph_cyc=0, so splitting changes nothing; ARM=main has it" ;;
+            esac
+            ;;
+        baselines)
+            case "$TASK_ID" in
+                0) baseline_run cyclegan small  ;;
+                1) baseline_run cyclegan medium ;;
+                2) baseline_run cyclegan large  ;;
+                3) baseline_run dclgan   small  ;;
+                4) baseline_run dclgan   medium ;;
+                5) baseline_run dclgan   large  ;;
+                *) not_in_arm "baselines are tasks 0-5" ;;
+            esac
+            ;;
+        *)
+            echo "ERROR: unknown ARM '${ARM}'" >&2
+            echo "  main, cycsplit, worstfield_cycmerged, worstfield_cycsplit or baselines" >&2
+            echo "  (or set PRED and NAME for any other directory)" >&2
             exit 1
-        fi
-        model=${BASELINES[$i]%%:*}
-        size=${BASELINES[$i]#*:}
-        NAME="${MARKER}_${model}_${size}"
-        PRED="$(preds_root_of "${ROOT}/Outputs_${MARKER_LC}_${model}_${size}")/${NAME}"
-    fi
+            ;;
+    esac
 fi
 
 # Truth: the registered partner split -- valA -> valB, testA -> testB -- under
@@ -162,9 +250,9 @@ tiles_root() {
 }
 TRUTH=${TRUTH:-$(tiles_root "$MARKER")/${MARKER}/TrainValAB/${SPLIT%A}B}
 
-OUT="${EVAL_DIR}/${NAME}"
+OUT="${EVAL_DIR}/${ARM}/${NAME}"
 
-echo "${NAME}"
+echo "${ARM} / ${NAME}"
 echo "  pred     ${PRED}"
 echo "  truth    ${TRUTH}"
 echo "  metrics  ${METRICS}"
