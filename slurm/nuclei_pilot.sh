@@ -23,18 +23,18 @@
 #   module load Anaconda3/2025.06-1
 #   conda create -n stardist python=3.10 -y
 #   conda activate stardist
-#   which python                  # must be .../envs/stardist/bin/python
-#   python -m pip install tensorflow stardist scikit-image matplotlib tifffile
+#   P=~/.conda/envs/stardist/bin/python
+#   $P -m pip install tensorflow stardist scikit-image matplotlib tifffile
 #
-# `python -m pip`, not bare `pip`: on this cluster `pip` can resolve to the
-# Anaconda module's own interpreter, which then installs into ~/.local -- where
-# every environment, topocg included, would see it. Tested with TensorFlow
-# 2.21 and StarDist 0.9.2; no pin is needed.
+# The env's python BY PATH, not `pip` or `python`: on this cluster an activated
+# env can still leave the Anaconda module's python 3.13 first on PATH, and its
+# pip then installs into ~/.local -- where every environment, topocg included,
+# would see it. Tested with TensorFlow 2.21 and StarDist 0.9.2; no pin needed.
 #
 # and fetch both pretrained models while there is internet (compute nodes have
 # none; they are cached under ~/.keras):
 #
-#   python -c "from stardist.models import StarDist2D as S; \
+#   $P -c "from stardist.models import StarDist2D as S; \
 #       S.from_pretrained('2D_versatile_he'); S.from_pretrained('2D_versatile_fluo')"
 #
 # THEN:
@@ -61,6 +61,17 @@ if command -v module >/dev/null 2>&1; then
     conda activate "${STARDIST_ENV:-stardist}"
 fi
 
+# The environment's own interpreter, by path. On this cluster an activated env
+# can still leave the Anaconda module's python first on PATH, which has no
+# StarDist; CONDA_PREFIX is set by activate either way. PYTHON overrides.
+PYTHON=${PYTHON:-${CONDA_PREFIX:+${CONDA_PREFIX}/bin/}python}
+if ! "$PYTHON" -c "import stardist" 2>/dev/null; then
+    echo "ERROR: ${PYTHON} cannot import stardist." >&2
+    echo "  Set PYTHON=~/.conda/envs/stardist/bin/python, or see the setup notes above." >&2
+    exit 1
+fi
+echo "python: ${PYTHON} ($("$PYTHON" --version 2>&1))"
+
 ROOT=${ROOT:-/work2/bz66izin-TopoCG}
 MARKERS=${MARKERS:-"Ki67 ER HER2 PR"}
 OUT=${OUT:-${ROOT}/nuclei_pilot}
@@ -86,7 +97,7 @@ for M in $MARKERS; do
     case " ${FAKE:-} " in *" ${M}="*)
         for f in ${FAKE}; do [ "${f%%=*}" = "$M" ] && fake_args+=(--fake "$f"); done ;;
     esac
-    python "$PILOT" --tiles-root "$(tiles_root "$M")" --markers "$M" \
+    "$PYTHON" "$PILOT" --tiles-root "$(tiles_root "$M")" --markers "$M" \
         --n "$N" --scales $SCALES --out "$OUT" \
         ${fake_args[@]+"${fake_args[@]}"}
 done
