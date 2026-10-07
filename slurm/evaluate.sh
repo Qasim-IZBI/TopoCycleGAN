@@ -39,6 +39,12 @@
 #     0-2 cyclegan small/medium/large, 3-5 dclgan small/medium/large
 #     (Outputs_<marker>_<model>_<size>), as train_baseline.sh named them.
 #
+#   ARM=identity             --array=0
+#     the H&E input itself scored as the prediction -- the "do nothing" row.
+#
+# The arms are defined in _eval_arms.sh, which evaluate_nuclei.sh sources too,
+# so task N is the same model in both and their results share a directory.
+#
 # A task its arm did not train exits clean with a note, so --array=0-12 is
 # also safe for any arm -- the lists above just avoid the empty jobs.
 #
@@ -93,7 +99,8 @@
 # METRICS=fid and TRUTH to a directory of real target tiles.
 #
 # Output: ${EVAL_ROOT}/<marker>/<split>/<arm>/<name>/{fid,patch_ssim,lpips}.csv
-#         ${EVAL_ROOT}/<marker>/<split>/summary.csv   (from `summary`)
+#         ${EVAL_ROOT}/<marker>/<split>/summary.csv   (from `summary`; it also
+#         carries evaluate_nuclei.sh's recall / precision / F1 where they exist)
 
 set -eo pipefail
 
@@ -138,23 +145,32 @@ if [ "${1:-}" = "summary" ]; then
             *)         tr -d '\r' < "$csv" | awk -F, '$1=="MEAN" { print $2 }' ;;
         esac
     }
+    # nuclei.csv (evaluate_nuclei.sh) is metric,value rows; its headline is
+    # centroid recall / precision / F1 at the default matching radius.
+    nuc_of() {
+        local csv="$1" key="$2"
+        [ -f "$csv" ] || { echo "-"; return; }
+        # LC_ALL=C: awk's printf honours the locale's decimal separator, and a
+        # comma there would split the CSV column.
+        tr -d '\r' < "$csv" | LC_ALL=C awk -F, -v k="$key" '$1==k { printf "%.4f", $2 }'
+    }
     out="${EVAL_DIR}/summary.csv"
-    echo "arm,name,fid,patch_ssim,lpips" > "$out"
+    echo "arm,name,fid,patch_ssim,lpips,nuc_recall,nuc_precision,nuc_f1" > "$out"
     # Arms in a fixed order, so the table reads main first and the controls
     # after it; anything else (custom, a new arm) follows alphabetically.
-    known="main cycsplit worstfield_cycmerged worstfield_cycsplit baselines"
+    known="main cycsplit worstfield_cycmerged worstfield_cycsplit baselines identity"
     arms="$known"
     for a in "${EVAL_DIR}"/*/; do
         a=$(basename "$a")
-        case " $known " in *" $a "*) ;; *) [ -f "${EVAL_DIR}/${a}/fid.csv" ] || arms="$arms $a" ;; esac
+        case " $known plots nuclei_ref " in *" $a "*) ;; *) [ -f "${EVAL_DIR}/${a}/fid.csv" ] || arms="$arms $a" ;; esac
     done
     for arm in $arms; do
         for d in "${EVAL_DIR}/${arm}"/*/; do
             name=$(basename "$d")
-            echo "${arm},${name},$(value_of "${d}fid.csv"),$(value_of "${d}patch_ssim.csv"),$(value_of "${d}lpips.csv")" >> "$out"
+            echo "${arm},${name},$(value_of "${d}fid.csv"),$(value_of "${d}patch_ssim.csv"),$(value_of "${d}lpips.csv"),$(nuc_of "${d}nuclei.csv" recall),$(nuc_of "${d}nuclei.csv" precision),$(nuc_of "${d}nuclei.csv" f1)" >> "$out"
         done
     done
-    echo "${MARKER} / ${SPLIT}   (fid lower, patch_ssim higher, lpips lower is better)"
+    echo "${MARKER} / ${SPLIT}   (fid, lpips lower; patch_ssim, nuc_* higher is better)"
     column -s, -t < "$out"
     echo
     echo "written to ${out}"
@@ -162,92 +178,15 @@ if [ "${1:-}" = "summary" ]; then
 fi
 
 # -----------------------------
-# Which predictions this task scores
+# Which predictions this task scores -- shared with evaluate_nuclei.sh, so
+# both file a model under the same <arm>/<name>
 # -----------------------------
-preds_root_of() {
-    if [ "$SPLIT" = "valA" ]; then echo "$1/preds"; else echo "$1/preds_${SPLIT}"; fi
-}
-
-# A task the arm never trained is not a failure: exit clean, say why.
-not_in_arm() {
-    echo "ARM=${ARM} task ${TASK_ID}: $1 -- nothing to evaluate"
-    exit 0
-}
-
-if [ -n "${PRED:-}" ]; then
-    NAME=${NAME:?PRED is set -- set NAME too, it names the output directory}
-    ARM=${ARM:-custom}
-else
-    ARM=${ARM:-main}
-    TASK_ID=${SLURM_ARRAY_TASK_ID:?submit with sbatch, or set PRED and NAME}
-    SLURM_DIR=${REPO:-${SLURM_SUBMIT_DIR:-$PWD}}
-    [ -f "${SLURM_DIR}/_grid.sh" ] || SLURM_DIR="${SLURM_DIR}/slurm"
-    source "${SLURM_DIR}/_grid.sh"
-    n_cells=${#CELLS[@]}
-
-    # grid_cell <root>: task N is grid cell N of the sweep under <root>.
-    grid_cell() {
-        (( TASK_ID < n_cells )) || not_in_arm "past the ${n_cells}-cell grid"
-        grid_select "$TASK_ID"
-        NAME="$RUN_NAME"
-        PRED="$(preds_root_of "$1")/${RUN_NAME}"
-    }
-    # baseline_run <model> <size>: one train_baseline.sh run.
-    baseline_run() {
-        NAME="${MARKER}_$1_$2"
-        PRED="$(preds_root_of "${ROOT}/Outputs_${MARKER_LC}_$1_$2")/${NAME}"
-    }
-
-    case "$ARM" in
-        main)
-            if (( TASK_ID < n_cells )); then
-                grid_cell "${ROOT}/Outputs_${MARKER_LC}"
-            else
-                case $(( TASK_ID - n_cells )) in
-                    0) baseline_run cyclegan small ;;
-                    1) baseline_run dclgan   small ;;
-                    *) not_in_arm "past the last task ($(( n_cells + 1 )))" ;;
-                esac
-            fi
-            ;;
-        cycsplit|worstfield_cycmerged|worstfield_cycsplit)
-            grid_cell "${ROOT}/Outputs_${MARKER_LC}_${ARM}"
-            # Mirror what the training scripts skip: no arm here trains the
-            # field-free cell 0, and a split arm trains no ph_cyc=0 cell.
-            [ "$TASK_ID" = "0" ] && not_in_arm "cell 0 is field-free; ARM=main has it"
-            case "$ARM" in *cycsplit)
-                [ "$PH_CYC" = "0" ] && not_in_arm "ph_cyc=0, so splitting changes nothing; ARM=main has it" ;;
-            esac
-            ;;
-        baselines)
-            case "$TASK_ID" in
-                0) baseline_run cyclegan small  ;;
-                1) baseline_run cyclegan medium ;;
-                2) baseline_run cyclegan large  ;;
-                3) baseline_run dclgan   small  ;;
-                4) baseline_run dclgan   medium ;;
-                5) baseline_run dclgan   large  ;;
-                *) not_in_arm "baselines are tasks 0-5" ;;
-            esac
-            ;;
-        *)
-            echo "ERROR: unknown ARM '${ARM}'" >&2
-            echo "  main, cycsplit, worstfield_cycmerged, worstfield_cycsplit or baselines" >&2
-            echo "  (or set PRED and NAME for any other directory)" >&2
-            exit 1
-            ;;
-    esac
-fi
+_slurm_dir=${REPO:-${SLURM_SUBMIT_DIR:-$PWD}}
+[ -f "${_slurm_dir}/_eval_arms.sh" ] || _slurm_dir="${_slurm_dir}/slurm"
+source "${_slurm_dir}/_eval_arms.sh"
 
 # Truth: the registered partner split -- valA -> valB, testA -> testB -- under
 # the same per-marker tile root inference read from.
-TILES=${TILES:-${ROOT}/MIST_tiles}
-TILES_BCI=${TILES_BCI:-${ROOT}/BCI_tiles}
-TILES_VS=${TILES_VS:-${ROOT}/VS_tiles}
-tiles_root() {
-    local var="TILES_$1"
-    echo "${!var:-$TILES}"
-}
 TRUTH=${TRUTH:-$(tiles_root "$MARKER")/${MARKER}/TrainValAB/${SPLIT%A}B}
 
 OUT="${EVAL_DIR}/${ARM}/${NAME}"

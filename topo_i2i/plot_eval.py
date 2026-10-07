@@ -48,6 +48,19 @@ METRICS = {
     "fid": ("FID", True),
     "patch_ssim": ("Patch SSIM", False),
     "lpips": ("LPIPS (zoo, unweighted VGG16)", True),
+    # From evaluate_nuclei.sh: StarDist nuclei on the H&E matched by centroid
+    # to nuclei on the generated IHC. Plotted only where it has been run.
+    "nuc_recall": ("Nuclei recall (H&E nuclei found again)", False),
+    "nuc_f1": ("Nuclei F1 (centroid match)", False),
+}
+
+# Which file each metric is read from, and the row holding its value.
+SOURCES = {
+    "fid": ("fid.csv", None),
+    "patch_ssim": ("patch_ssim.csv", "MEAN"),
+    "lpips": ("lpips.csv", "MEAN"),
+    "nuc_recall": ("nuclei.csv", "recall"),
+    "nuc_f1": ("nuclei.csv", "f1"),
 }
 
 SWEEP_PANELS = [
@@ -71,6 +84,7 @@ REFS = {
     "cell0": ("Cell 0: vanilla CycleGAN (topo-train)", "#8a8984", (0, (1, 2)), None),
     "cyclegan": ("CycleGAN (zoo)", "#3d3c39", "-", "P"),
     "dclgan": ("DCLGAN (zoo)", "#8a8984", "--", "X"),
+    "identity": ("Identity: H&E unchanged", "#b5b4ae", (0, (6, 2, 1, 2)), None),
 }
 SIZES = ["small", "medium", "large"]
 
@@ -83,17 +97,19 @@ CELL_RE = re.compile(r"_lt([0-9.eE+-]+)_cyc(\d)_trans(\d)$")
 BASE_RE = re.compile(r"_(cyclegan|dclgan)_(small|medium|large)$")
 
 
-def read_metric(csv_path: str, metric: str) -> Optional[float]:
-    """The headline value i2i-evaluate wrote, or None if it is not there yet."""
+def read_metric(model_dir: str, metric: str) -> Optional[float]:
+    """The headline value of a metric for one model, or None if not there yet."""
+    fname, key = SOURCES[metric]
+    csv_path = os.path.join(model_dir, fname)
     if not os.path.isfile(csv_path):
         return None
     with open(csv_path, newline="") as f:
         rows = list(csv.reader(f))
     try:
-        if metric == "fid":                     # metric,value,n_real,n_fake
+        if key is None:                         # fid: metric,value,n_real,n_fake
             return float(rows[1][1])
-        for r in rows:                          # per-tile rows, then MEAN
-            if r and r[0] == "MEAN":
+        for r in rows:                          # MEAN row, or a metric,value row
+            if r and r[0] == key:
                 return float(r[1])
     except (IndexError, ValueError):
         pass
@@ -113,11 +129,14 @@ def load(split_dir: str, metric: str):
 
     for arm in sorted(os.listdir(split_dir)) if os.path.isdir(split_dir) else []:
         arm_dir = os.path.join(split_dir, arm)
-        if not os.path.isdir(arm_dir) or arm == "plots":
+        if not os.path.isdir(arm_dir) or arm in ("plots", "nuclei_ref"):
             continue
         for name in sorted(os.listdir(arm_dir)):
-            v = read_metric(os.path.join(arm_dir, name, metric + ".csv"), metric)
+            v = read_metric(os.path.join(arm_dir, name), metric)
             if v is None:
+                continue
+            if name.endswith("_identity"):
+                refs["identity"] = v
                 continue
             if name.endswith("_baseline_cyclegan"):
                 if arm == "main":
@@ -218,7 +237,7 @@ def plot_metric(marker: str, split: str, metric: str, split_dir: str,
         ax.set_xlabel("λ_topo", fontsize=8.5, color=INK_2)
 
         # Reference lines first, so the sweep draws over them.
-        for key in ("cell0", "cyclegan", "dclgan"):
+        for key in ("cell0", "cyclegan", "dclgan", "identity"):
             if key in refs and refs[key] <= top:
                 _, col, ls, _ = REFS[key]
                 ax.axhline(refs[key], color=col, linestyle=ls, linewidth=1.2, zorder=2)
@@ -265,15 +284,17 @@ def plot_metric(marker: str, split: str, metric: str, split_dir: str,
                for l, c, m in CONFIGS.values()]
     handles += [Line2D([], [], color=c, linestyle=ls, linewidth=1.4,
                        marker=mk, markersize=6 if mk else 0, label=l)
-                for l, c, ls, mk in REFS.values()]
+                for key, (l, c, ls, mk) in REFS.items()
+                if key != "identity" or "identity" in refs]
     fig.legend(handles=handles, loc="upper left", bbox_to_anchor=(0.055, 0.995),
-               ncol=6, frameon=False, fontsize=8.5, labelcolor=INK_2,
+               ncol=len(handles), frameon=False, fontsize=8.5, labelcolor=INK_2,
                handlelength=2.6, columnspacing=1.6)
     fig.suptitle("%s · %s · %s" % (marker, split, label.split(" (")[0]),
                  x=0.055, y=1.075, ha="left", fontsize=12, color=INK, fontweight="bold")
     fig.text(0.055, 0.005,
-             "Grey lines in the sweep panels are the small baselines and the sweep's own "
-             "cell 0. ▲ on the top edge: off-scale, value printed. One seed per model.",
+             "Grey lines in the sweep panels: the small baselines, the sweep's own cell 0 and, "
+             "where run, the identity row (H&E unchanged). ▲ on the top edge: off-scale, "
+             "value printed. One seed per model.",
              fontsize=7.5, color=INK_2)
     fig.subplots_adjust(left=0.055, right=0.995, top=0.86, bottom=0.17, wspace=0.08)
 
