@@ -86,10 +86,11 @@ tiles_root() {
     echo "${!var:-$TILES}"
 }
 
-REPO_ROOT=${REPO:-${SLURM_SUBMIT_DIR:-$PWD}}
-[ -f "${REPO_ROOT}/tools/nuclei_pilot.py" ] || REPO_ROOT="${REPO_ROOT}/.."
+# The repo checkout on the cluster, fixed rather than derived from the submit
+# directory. REPO_ROOT overrides it for another checkout.
+REPO_ROOT=${REPO_ROOT:-/home/sc.uni-leipzig.de/bz66izin/TopoCG_Project/TopoCycleGAN}
 PILOT="${REPO_ROOT}/tools/nuclei_pilot.py"
-[ -f "$PILOT" ] || { echo "ERROR: cannot find tools/nuclei_pilot.py from ${REPO_ROOT}" >&2; exit 1; }
+[ -f "$PILOT" ] || { echo "ERROR: no tools/nuclei_pilot.py under REPO_ROOT=${REPO_ROOT}" >&2; exit 1; }
 
 # One call per tile root: BCI is tiled into its own.
 for M in $MARKERS; do
