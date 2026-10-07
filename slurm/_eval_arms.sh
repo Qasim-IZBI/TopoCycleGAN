@@ -78,10 +78,15 @@ else
             grid_cell "${ROOT}/Outputs_${MARKER_LC}_${ARM}"
             # Mirror what the training scripts skip: no arm here trains the
             # field-free cell 0, and a split arm trains no ph_cyc=0 cell.
-            [ "$TASK_ID" = "0" ] && not_in_arm "cell 0 is field-free; ARM=main has it"
-            case "$ARM" in *cycsplit)
-                [ "$PH_CYC" = "0" ] && not_in_arm "ph_cyc=0, so splitting changes nothing; ARM=main has it" ;;
-            esac
+            # `if`, not `[ ] && ...`: a false test as the last command run
+            # here would become the exit status of `source`, and the callers'
+            # set -e would end every valid split-arm task, silently.
+            if [ "$TASK_ID" = "0" ]; then
+                not_in_arm "cell 0 is field-free; ARM=main has it"
+            fi
+            if [ "${ARM%cycsplit}" != "$ARM" ] && [ "$PH_CYC" = "0" ]; then
+                not_in_arm "ph_cyc=0, so splitting changes nothing; ARM=main has it"
+            fi
             ;;
         baselines)
             case "$TASK_ID" in
@@ -97,7 +102,9 @@ else
         identity)
             # The input as its own prediction. Any metric that rewards it is
             # measuring structure kept, not IHC made -- this row says how much.
-            [ "$TASK_ID" = "0" ] || not_in_arm "identity is task 0 only"
+            if [ "$TASK_ID" != "0" ]; then
+                not_in_arm "identity is task 0 only"
+            fi
             NAME="${MARKER}_identity"
             PRED="$(tiles_root "$MARKER")/${MARKER}/TrainValAB/${SPLIT}"
             ;;
@@ -109,3 +116,7 @@ else
             ;;
     esac
 fi
+
+# Sourced: end on success whatever branch ran, so `source` itself never
+# returns non-zero into a caller running under set -e.
+:

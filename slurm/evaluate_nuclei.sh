@@ -106,9 +106,13 @@ if [ "$MODE" = "missing" ]; then
     fi
     # A task still queued or running has no nuclei.csv yet either, and would
     # be submitted twice. Say so, and do not submit while any are in flight.
+    # Reruns are named per marker, so one marker's reruns do not hold up the
+    # next marker in a loop; first submissions carry no marker in their name,
+    # so they hold up every marker, which errs on the safe side.
     in_flight=0
     if command -v squeue >/dev/null 2>&1; then
-        in_flight=$(squeue -h -u "$USER" -n topo_eval_nuclei -t PENDING,RUNNING,REQUEUED 2>/dev/null | wc -l | tr -d " ")
+        in_flight=$(squeue -h -u "$USER" -n "topo_eval_nuclei,topo_eval_nuclei_${MARKER}" \
+                        -t PENDING,RUNNING,REQUEUED 2>/dev/null | wc -l | tr -d " ")
     fi
     if (( in_flight > 0 )); then
         echo "NOTE: ${in_flight} evaluate_nuclei job(s) still queued or running -- the list"
@@ -139,7 +143,7 @@ if [ "$MODE" = "missing" ]; then
         done
         (( ${#todo[@]} )) || continue
         tasks=$(IFS=,; echo "${todo[*]}")
-        cmd=(sbatch --time="${TIME:-02:00:00}" --array="$tasks"
+        cmd=(sbatch --time="${TIME:-02:00:00}" --array="$tasks" --job-name="topo_eval_nuclei_${MARKER}"
              --export=ALL,MARKER="$MARKER",ARM="$arm" evaluate_nuclei.sh)
         if [ "${SUBMIT:-0}" = "1" ]; then
             echo "  -> $(cd "$_slurm" && "${cmd[@]}")"
