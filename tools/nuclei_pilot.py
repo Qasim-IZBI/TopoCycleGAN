@@ -122,8 +122,26 @@ def fetch_models(models_dir: str) -> None:
         print("[models] %s -> %s" % (name, dst))
 
 
+# A tile whose 1st-99.8th percentile intensity spans fewer levels than this
+# holds no tissue. StarDist normalises by that span, so on such a tile it
+# divides by almost nothing: background noise becomes "nuclei", and a single
+# dark pixel (dust) on a blank tile becomes a coordinate so large that its
+# polygon library aborts the whole process (ClipperLib "Coordinate outside
+# allowed range" -- uncatchable from Python). Real tissue spans far more.
+MIN_RANGE = 16
+
+
+def is_blank(rgb: np.ndarray) -> bool:
+    lo, hi = np.percentile(rgb, (1, 99.8))
+    return (hi - lo) < MIN_RANGE
+
+
 class Segmenter:
+    """StarDist on a tile; a blank tile gets an empty mask without being run.
+    `blank` counts how many were skipped, so a run can report it."""
+
     def __init__(self, models_dir: Optional[str] = None):
+        self.blank = 0
         from stardist.models import StarDist2D
         if models_dir:
             # Read-only load from the fixed copy -- nothing is unpacked, so any
@@ -134,18 +152,33 @@ class Segmenter:
         self.he = load("2D_versatile_he")
         self.fluo = load("2D_versatile_fluo")
 
+    def _empty_if_blank(self, rgb: np.ndarray) -> Optional[np.ndarray]:
+        if is_blank(rgb):
+            self.blank += 1
+            return np.zeros(rgb.shape[:2], dtype=np.int32)
+        return None
+
     def he_rgb(self, rgb: np.ndarray, scale: float) -> np.ndarray:
         from csbdeep.utils import normalize
+        empty = self._empty_if_blank(rgb)
+        if empty is not None:
+            return empty
         x = normalize(rgb.astype(np.float32), 1, 99.8, axis=(0, 1, 2))
         labels, _ = self.he.predict_instances(x, scale=scale, show_tile_progress=False)
         return labels
 
     def fluo_hdab(self, rgb: np.ndarray, scale: float) -> np.ndarray:
+        empty = self._empty_if_blank(rgb)
+        if empty is not None:
+            return empty
         labels, _ = self.fluo.predict_instances(nuclear_od(rgb, dab=True), scale=scale,
                                                 show_tile_progress=False)
         return labels
 
     def fluo_h(self, rgb: np.ndarray, scale: float) -> np.ndarray:
+        empty = self._empty_if_blank(rgb)
+        if empty is not None:
+            return empty
         labels, _ = self.fluo.predict_instances(nuclear_od(rgb, dab=False), scale=scale,
                                                 show_tile_progress=False)
         return labels

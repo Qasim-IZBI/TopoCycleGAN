@@ -133,6 +133,29 @@ def atomic_savez(path: str, **arrays) -> None:
     os.replace(tmp, path)
 
 
+# Tiles a previous run died on. StarDist's polygon library can abort the whole
+# process from C++, which Python cannot catch; resubmitting would die on the
+# same tile again. So each tile is marked in flight before it is segmented and
+# unmarked after: a mark found at start-up is a tile that killed a run, and it
+# gets an empty mask instead of a second attempt.
+FAILED: List[str] = []
+
+
+def guarded(seg: Segmenter, variant: str, img: np.ndarray, scale: float,
+            inflight_dir: str, stem: str) -> np.ndarray:
+    os.makedirs(inflight_dir, exist_ok=True)
+    mark = os.path.join(inflight_dir, stem)
+    if os.path.exists(mark):
+        print("  [failed] %s killed a previous run; empty mask, not retried" % stem)
+        FAILED.append(stem)
+        os.remove(mark)
+        return np.zeros(img.shape[:2], dtype=np.int32)
+    open(mark, "w").close()
+    labels = getattr(seg, variant)(img, scale).astype(np.int32)
+    os.remove(mark)
+    return labels
+
+
 def reference(seg: Segmenter, he_path: str, cache_dir: str, variant: str,
               scale: float) -> np.ndarray:
     stem = os.path.splitext(os.path.basename(he_path))[0]
@@ -142,7 +165,8 @@ def reference(seg: Segmenter, he_path: str, cache_dir: str, variant: str,
             return np.load(path)["labels"]
         except Exception:
             pass                      # unreadable: recompute and overwrite
-    labels = getattr(seg, variant)(load_rgb(he_path), scale).astype(np.int32)
+    labels = guarded(seg, variant, load_rgb(he_path), scale,
+                     os.path.join(cache_dir, ".inflight"), stem)
     atomic_savez(path, labels=labels)
     return labels
 
@@ -258,7 +282,10 @@ def main() -> None:
             reference(seg, he[s], cache_dir, he_variant, he_scale)
             if k % 200 == 0 or k == len(stems):
                 print("[ref] %d/%d  %.2fs/tile" % (k, len(stems), (time.time() - t0) / k))
-        print("[ref] cache complete: %s" % cache_dir)
+        print("[ref] cache complete: %s  (%d blank tiles given an empty mask%s)"
+              % (cache_dir, seg.blank,
+                 ", %d that crashed StarDist: %s" % (len(FAILED), " ".join(FAILED))
+                 if FAILED else ""))
         return
 
     if not (args.pred and args.out):
@@ -298,7 +325,8 @@ def main() -> None:
         img = load_rgb(pred[s])
         if img.shape[:2] != he_img.shape[:2]:
             img = np.asarray(Image.fromarray(img).resize(he_img.shape[1::-1], Image.BILINEAR))
-        lab = getattr(seg, ihc_variant)(img, ihc_scale).astype(np.int32)
+        lab = guarded(seg, ihc_variant, img, ihc_scale,
+                      os.path.join(args.out, ".inflight"), s)
 
         rid, rc, _ = nuclei_table(ref)
         pid, pc, pa = nuclei_table(lab)
@@ -353,6 +381,8 @@ def main() -> None:
     rows += [("iou50_recall", ir), ("iou50_precision", ip), ("iou50_f1", if1),
              ("iou50_mean_matched_iou", float(np.mean(iou_scores)) if iou_scores else 0.0),
              ("n_tiles", len(stems)), ("n_ref_nuclei", n_ref), ("n_pred_nuclei", n_pred),
+             ("blank_tiles_skipped", seg.blank),
+             ("failed_tiles", len(FAILED)),
              ("radius_px", primary), ("he_segmenter", "%s x%g" % (he_variant, he_scale)),
              ("ihc_segmenter", "%s x%g" % (ihc_variant, ihc_scale))]
     with open(os.path.join(args.out, "nuclei.csv"), "w", newline="") as f:
@@ -373,6 +403,11 @@ def main() -> None:
                                                      ir, ip, if1))
     print("  %d H&E nuclei, %d generated, over %d tiles -> %s"
           % (n_ref, n_pred, len(stems), args.out))
+    if seg.blank:
+        print("  %d blank tile(s) given an empty mask without segmenting" % seg.blank)
+    if FAILED:
+        print("  %d tile(s) crashed StarDist in an earlier run and were left empty: %s"
+              % (len(FAILED), " ".join(FAILED)))
 
 
 if __name__ == "__main__":
