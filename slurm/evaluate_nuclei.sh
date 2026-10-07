@@ -43,6 +43,15 @@
 # BCI goes the same way with MARKER=BCI. VS has no IHC, so no settings exist
 # for it.
 #
+# RERUNNING FAILURES. Whatever killed a task -- timeout, memory, a node -- it
+# leaves predictions without a nuclei.csv. This lists every such model of a
+# marker with the sbatch line that reruns exactly those, and SUBMIT=1 submits
+# them (refused while evaluate_nuclei jobs are still queued or running):
+#
+#   bash evaluate_nuclei.sh missing                        # MARKER=ER etc. in env
+#   for M in Ki67 ER HER2 PR BCI; do MARKER=$M bash evaluate_nuclei.sh missing; done
+#   MARKER=ER SUBMIT=1 bash evaluate_nuclei.sh missing
+#
 # A model whose nuclei.csv exists is skipped; FORCE=1 recomputes it.
 # SAVE_MASKS=1 keeps every generated-IHC label mask (~10-20 MB per model).
 #
@@ -66,6 +75,82 @@ FIGURES=${FIGURES:-12}
 [ -f "$EVAL_PY" ] || { echo "ERROR: no tools/nuclei_eval.py under REPO_ROOT=${REPO_ROOT}" >&2; exit 1; }
 
 MODE=${1:-models}
+
+# -----------------------------
+# missing: which models of this marker have predictions but no nuclei.csv --
+# i.e. whose task failed, timed out, ran out of memory or never ran -- and
+# the sbatch line that reruns exactly those. Read off the result directories,
+# not SLURM's records, so it does not matter how a task died. SUBMIT=1 submits
+# the lines instead of printing them. Login node, no environment needed.
+# -----------------------------
+if [ "$MODE" = "missing" ]; then
+    _slurm=${REPO:-${REPO_ROOT}/slurm}
+    # Every arm and the tasks it has -- the same lists as the header.
+    ARM_TASKS="main:0-14 identity:0 cycsplit:2,3,5,6,8,9,11,12
+               worstfield_cycmerged:1-12 worstfield_cycsplit:2,3,5,6,8,9,11,12
+               baselines:0-5"
+    expand() {     # "0-3,7" -> "0 1 2 3 7"
+        local part out=""
+        for part in ${1//,/ }; do
+            case "$part" in
+                *-*) out="$out $(seq "${part%-*}" "${part#*-}" | tr '\n' ' ')" ;;
+                *)   out="$out $part" ;;
+            esac
+        done
+        echo $out
+    }
+    if [ ! -d "${REF_CACHE}" ] || [ -z "$(ls -A "${REF_CACHE}" 2>/dev/null)" ]; then
+        echo "${MARKER}: no H&E reference under ${REF_CACHE} -- run the ref job first:"
+        echo "  sbatch --array=0 --export=ALL,MARKER=${MARKER} evaluate_nuclei.sh ref"
+        exit 0
+    fi
+    # A task still queued or running has no nuclei.csv yet either, and would
+    # be submitted twice. Say so, and do not submit while any are in flight.
+    in_flight=0
+    if command -v squeue >/dev/null 2>&1; then
+        in_flight=$(squeue -h -u "$USER" -n topo_eval_nuclei -t PENDING,RUNNING,REQUEUED 2>/dev/null | wc -l | tr -d " ")
+    fi
+    if (( in_flight > 0 )); then
+        echo "NOTE: ${in_flight} evaluate_nuclei job(s) still queued or running -- the list"
+        echo "      below includes theirs. Rerun this once they have finished."
+        [ "${SUBMIT:-0}" = "1" ] && { echo "      Not submitting anything until then."; SUBMIT=0; }
+    fi
+    n_done=0 n_todo=0 n_nopred=0
+    for spec in $ARM_TASKS; do
+        arm=${spec%%:*}
+        todo=()
+        for t in $(expand "${spec#*:}"); do
+            # Resolve task t of this arm exactly as a job would, in a subshell
+            # (a task the arm never trained exits it clean, printing no '|').
+            line=$( (unset PRED NAME; ARM=$arm SLURM_ARRAY_TASK_ID=$t REPO=$_slurm
+                     source "${_slurm}/_eval_arms.sh" >/dev/null 2>&1
+                     echo "${PRED}|${NAME}") )
+            case "$line" in *"|"*) ;; *) continue ;; esac
+            pred=${line%%|*} name=${line#*|}
+            [ -n "$name" ] || continue
+            if [ -f "${EVAL_DIR}/${arm}/${name}/nuclei.csv" ]; then
+                n_done=$((n_done + 1))
+            elif [ -d "$pred" ]; then
+                todo+=("$t"); n_todo=$((n_todo + 1))
+                echo "  missing  ${arm}/${name}"
+            else
+                n_nopred=$((n_nopred + 1))
+            fi
+        done
+        (( ${#todo[@]} )) || continue
+        tasks=$(IFS=,; echo "${todo[*]}")
+        cmd=(sbatch --time="${TIME:-02:00:00}" --array="$tasks"
+             --export=ALL,MARKER="$MARKER",ARM="$arm" evaluate_nuclei.sh)
+        if [ "${SUBMIT:-0}" = "1" ]; then
+            echo "  -> $(cd "$_slurm" && "${cmd[@]}")"
+        else
+            echo "  rerun:   ${cmd[*]}"
+        fi
+    done
+    echo "${MARKER}/${SPLIT}: ${n_done} done, ${n_todo} failed or not run, ${n_nopred} without predictions yet"
+    exit 0
+fi
+
 if [ "$MODE" = "ref" ]; then
     # One reference job per marker, however it was submitted: the header's
     # default array would otherwise start fifteen identical ones.
