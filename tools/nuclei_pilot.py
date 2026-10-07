@@ -97,11 +97,42 @@ def nuclear_od(rgb: np.ndarray, dab: bool = True) -> np.ndarray:
     return np.clip(normalize(od.astype(np.float32), 1, 99.8), 0, 1)
 
 
+MODELS = ("2D_versatile_he", "2D_versatile_fluo")
+
+
+def fetch_models(models_dir: str) -> None:
+    """Download both pretrained models once and copy them to models_dir.
+
+    StarDist2D.from_pretrained() unpacks its archive into ~/.keras again on
+    EVERY call, rewriting weights_best.h5 -- so two jobs starting together can
+    read a half-written file ("bad local heap signature"). Loading from a copy
+    nothing rewrites avoids that. Run this once, on the login node.
+    """
+    import shutil
+    from csbdeep.models.pretrained import get_model_folder
+    from stardist.models import StarDist2D
+    os.makedirs(models_dir, exist_ok=True)
+    for name in MODELS:
+        src = get_model_folder(StarDist2D, name)
+        dst = os.path.join(models_dir, name)
+        if os.path.isdir(dst):
+            shutil.rmtree(dst)
+        shutil.copytree(src, dst)
+        StarDist2D(None, name=name, basedir=models_dir)     # loads, or raises
+        print("[models] %s -> %s" % (name, dst))
+
+
 class Segmenter:
-    def __init__(self):
+    def __init__(self, models_dir: Optional[str] = None):
         from stardist.models import StarDist2D
-        self.he = StarDist2D.from_pretrained("2D_versatile_he")
-        self.fluo = StarDist2D.from_pretrained("2D_versatile_fluo")
+        if models_dir:
+            # Read-only load from the fixed copy -- nothing is unpacked, so any
+            # number of jobs can do this at once.
+            load = lambda name: StarDist2D(None, name=name, basedir=models_dir)
+        else:
+            load = StarDist2D.from_pretrained
+        self.he = load("2D_versatile_he")
+        self.fluo = load("2D_versatile_fluo")
 
     def he_rgb(self, rgb: np.ndarray, scale: float) -> np.ndarray:
         from csbdeep.utils import normalize
@@ -159,9 +190,9 @@ def sheet(path: str, title: str, rows: List[Tuple[str, np.ndarray, List[Tuple[st
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--tiles-root", required=True,
+    p.add_argument("--tiles-root",
                    help="holds <marker>/TrainValAB/<split>; pass BCI's root for BCI")
-    p.add_argument("--markers", nargs="+", required=True)
+    p.add_argument("--markers", nargs="+")
     p.add_argument("--split", default="valA", help="H&E split; the IHC is its A->B partner")
     p.add_argument("--n", type=int, default=20, help="tiles per marker")
     p.add_argument("--seed", type=int, default=0)
@@ -172,11 +203,26 @@ def main() -> None:
     p.add_argument("--fake", action="append", default=[], metavar="MARKER=DIR",
                    help="one model's generated IHC for that marker, segmented too and "
                         "matched against the H&E nuclei (repeatable)")
-    p.add_argument("--out", required=True)
+    p.add_argument("--out")
+    p.add_argument("--models-dir", default=None,
+                   help="load the pretrained models from this fixed copy (made by "
+                        "--fetch-models) instead of ~/.keras, which from_pretrained "
+                        "rewrites on every call -- required when jobs run in parallel")
+    p.add_argument("--fetch-models", action="store_true",
+                   help="download both models into --models-dir and exit (login node)")
     args = p.parse_args()
 
+    if args.fetch_models:
+        if not args.models_dir:
+            p.error("--fetch-models needs --models-dir")
+        fetch_models(args.models_dir)
+        return
+    for flag in ("tiles_root", "markers", "out"):
+        if not getattr(args, flag):
+            p.error("--%s is required" % flag.replace("_", "-"))
+
     fakes = dict(f.split("=", 1) for f in args.fake)
-    seg = Segmenter()
+    seg = Segmenter(args.models_dir)
     os.makedirs(args.out, exist_ok=True)
 
     rows_out = []

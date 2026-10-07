@@ -31,11 +31,16 @@
 # pip then installs into ~/.local -- where every environment, topocg included,
 # would see it. Tested with TensorFlow 2.21 and StarDist 0.9.2; no pin needed.
 #
-# and fetch both pretrained models while there is internet (compute nodes have
-# none; they are cached under ~/.keras):
+# and fetch both pretrained models into a fixed copy while there is internet
+# (compute nodes have none):
 #
-#   $P -c "from stardist.models import StarDist2D as S; \
-#       S.from_pretrained('2D_versatile_he'); S.from_pretrained('2D_versatile_fluo')"
+#   $P ~/TopoCG_Project/TopoCycleGAN/tools/nuclei_pilot.py \
+#       --fetch-models --models-dir /work2/bz66izin-TopoCG/stardist_models
+#
+# The jobs load from that copy, NOT through from_pretrained(): it re-unpacks
+# its archive into ~/.keras on every call, rewriting weights_best.h5, so two
+# jobs starting together read a half-written file and die with "bad local heap
+# signature". The copy is only ever read, so any number of jobs can share it.
 #
 # THEN:
 #
@@ -92,6 +97,15 @@ REPO_ROOT=${REPO_ROOT:-/home/sc.uni-leipzig.de/bz66izin/TopoCG_Project/TopoCycle
 PILOT="${REPO_ROOT}/tools/nuclei_pilot.py"
 [ -f "$PILOT" ] || { echo "ERROR: no tools/nuclei_pilot.py under REPO_ROOT=${REPO_ROOT}" >&2; exit 1; }
 
+MODELS_DIR=${MODELS_DIR:-${ROOT}/stardist_models}
+for m in 2D_versatile_he 2D_versatile_fluo; do
+    if [ ! -f "${MODELS_DIR}/${m}/weights_best.h5" ]; then
+        echo "ERROR: no ${m} under MODELS_DIR=${MODELS_DIR}. Once, on the login node:" >&2
+        echo "  ${PYTHON} ${PILOT} --fetch-models --models-dir ${MODELS_DIR}" >&2
+        exit 1
+    fi
+done
+
 # One call per tile root: BCI is tiled into its own.
 for M in $MARKERS; do
     fake_args=()
@@ -99,7 +113,7 @@ for M in $MARKERS; do
         for f in ${FAKE}; do [ "${f%%=*}" = "$M" ] && fake_args+=(--fake "$f"); done ;;
     esac
     "$PYTHON" "$PILOT" --tiles-root "$(tiles_root "$M")" --markers "$M" \
-        --n "$N" --scales $SCALES --out "$OUT" \
+        --n "$N" --scales $SCALES --out "$OUT" --models-dir "$MODELS_DIR" \
         ${fake_args[@]+"${fake_args[@]}"}
 done
 
