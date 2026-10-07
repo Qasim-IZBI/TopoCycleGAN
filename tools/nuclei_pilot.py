@@ -85,7 +85,12 @@ def nuclear_od(rgb: np.ndarray, dab: bool = True) -> np.ndarray:
     it: bright where the stain is, which is what the fluorescence model expects."""
     from csbdeep.utils import normalize
     from skimage.color import rgb2hed
-    hed = rgb2hed(rgb)
+    # Floor the RGB first. A near-black pixel (saturated scanner pixel, dust)
+    # has near-infinite optical density, and a sprinkle of them sets the 99.8th
+    # percentile the normalisation divides by -- on dark DAB tissue that crushed
+    # the nuclei to near black (PR in the first pilot). 10/255 still leaves the
+    # darkest real stain distinct.
+    hed = rgb2hed(np.maximum(rgb, 10))
     od = np.clip(hed[..., 0], 0, None)
     if dab:
         od = od + np.clip(hed[..., 2], 0, None)
@@ -160,7 +165,10 @@ def main() -> None:
     p.add_argument("--split", default="valA", help="H&E split; the IHC is its A->B partner")
     p.add_argument("--n", type=int, default=20, help="tiles per marker")
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--scales", type=float, nargs="+", default=[1.0, 1.5, 2.0])
+    # x1 found almost nothing on any dataset in the first pilot -- nuclei are
+    # half their native size in these tiles -- and x2 still missed nuclei in
+    # dense H&E, so the range starts at 1.5 and goes past 2.
+    p.add_argument("--scales", type=float, nargs="+", default=[1.5, 2.0, 2.5, 3.0])
     p.add_argument("--fake", action="append", default=[], metavar="MARKER=DIR",
                    help="one model's generated IHC for that marker, segmented too and "
                         "matched against the H&E nuclei (repeatable)")

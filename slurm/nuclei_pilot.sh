@@ -9,7 +9,7 @@
 #SBATCH --partition=clara
 #SBATCH --exclude=clara[02,04-08]
 #SBATCH --ntasks=1
-# No --gres: ~20 tiles per marker at three scales runs in minutes on CPU, and
+# No --gres: ~20 tiles per marker at four scales runs in minutes on CPU, and
 # TensorFlow on CPU avoids matching its CUDA build to the node's driver.
 
 # Pilot for the nuclei evaluation: segments ~20 real H&E and real IHC tiles
@@ -76,7 +76,7 @@ ROOT=${ROOT:-/work2/bz66izin-TopoCG}
 MARKERS=${MARKERS:-"Ki67 ER HER2 PR"}
 OUT=${OUT:-${ROOT}/nuclei_pilot}
 N=${N:-20}
-SCALES=${SCALES:-"1 1.5 2"}
+SCALES=${SCALES:-"1.5 2 2.5 3"}
 
 # Tile root per marker -- the same lookup the rest of the pipeline uses.
 TILES=${TILES:-${ROOT}/MIST_tiles}
