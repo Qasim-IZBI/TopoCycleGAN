@@ -80,14 +80,20 @@ seed0_paths() {   # <model> -> sets SRC_RUN, SRC_PREDS
     esac
 }
 
-# Newest numbered checkpoint step of a run directory, or 0.
+# How far a run has got: the newest numbered checkpoint, or -- further along
+# between those 100k-step saves -- the last step the trainer logged to
+# loss_log.csv (every log_steps; a resumed run continues from that point too).
 last_step() {
-    local f n=0
+    local f n=0 logged
     for f in "$1"/checkpoints/step_[0-9]*.pt; do
         [ -e "$f" ] || continue
         f=${f##*step_}; f=${f%.pt}
         (( f > n )) && n=$f
     done
+    if [ -f "$1/loss_log.csv" ]; then
+        logged=$(tail -n 1 "$1/loss_log.csv" | cut -d, -f1 | tr -d '\r')
+        case "$logged" in ''|*[!0-9]*) ;; *) (( logged > n )) && n=$logged ;; esac
+    fi
     echo "$n"
 }
 
@@ -95,6 +101,15 @@ last_step() {
 # status: every member's progress, and whether it is a true repeat of seed 0
 # -----------------------------
 if [ "${1:-}" = "status" ]; then
+    # A member still queued has written nothing and shows as '-'; one running
+    # shows its progress but is not finished. Resubmitting either would put a
+    # second job on the same member directory, writing the same checkpoints.
+    # So no resubmit line is printed while any ensemble job is in flight.
+    in_flight=0
+    if command -v squeue >/dev/null 2>&1; then
+        in_flight=$(squeue -h -u "$USER" -n topo_ensemble -t PENDING,RUNNING,REQUEUED,CONFIGURING \
+                        2>/dev/null | wc -l | tr -d " ")
+    fi
     for MARKER in ${MARKERS:-${MARKER:?set MARKER or MARKERS}}; do
         echo "== ${MARKER}"
         resubmit=()
@@ -127,13 +142,20 @@ if [ "${1:-}" = "status" ]; then
             done
             echo "$line"
         done
-        if (( ${#resubmit[@]} )); then
+        if (( ${#resubmit[@]} )) && (( in_flight > 0 )); then
+            echo "  ${#resubmit[@]} member(s) not finished -- no resubmit while jobs are in flight"
+        elif (( ${#resubmit[@]} )); then
             echo "  resubmit:  sbatch --array=$(IFS=,; echo "${resubmit[*]}") --export=ALL,MARKER=${MARKER} train_ensemble.sh"
         else
             echo "  all 30 members at their step budget"
         fi
     done
-    echo "('-' not started, Nk = newest checkpoint, ! = settings differ from seed 0:"
+    if (( in_flight > 0 )); then
+        echo "NOTE: ${in_flight} ensemble job line(s) still queued or running. Resubmitting now"
+        echo "      would start a second job on a member that already has one; run status"
+        echo "      again once squeue shows none -- then the resubmit lines are safe."
+    fi
+    echo "('-' not started, Nk = steps reached, ! = settings differ from seed 0:"
     echo " run tools/run_args.py --compare <seed0>/training_meta.json <member>/training_meta.json)"
     exit 0
 fi
