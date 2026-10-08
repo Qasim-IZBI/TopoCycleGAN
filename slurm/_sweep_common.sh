@@ -180,6 +180,7 @@ run_cmd topo-train \
     --topo-every "${TOPO_EVERY}" \
     --topo-start-step "${TOPO_START}" \
     --topo-warmup-steps "${TOPO_WARMUP}" \
+    ${SEED:+--seed "$SEED"} \
     ${PH_CYC_SPLIT:+$( [ "$PH_CYC_SPLIT" = "1" ] && echo --ph-cyc-split )}
 
 echo "Done: ${RUN_NAME} finished successfully."

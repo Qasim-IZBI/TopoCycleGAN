@@ -40,6 +40,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--amp", action="store_true")
     p.add_argument("--save-steps", type=int, default=25_000)
     p.add_argument("--log-steps", type=int, default=1_000)
+    p.add_argument("--seed", type=int, default=None,
+                   help="seed python, numpy and torch (CPU and CUDA) before the model "
+                        "and the loader are built -- as the zoo's i2i-train does. "
+                        "Without it a run cannot be repeated, and an ensemble of runs "
+                        "differs in nothing it can name")
 
     p.add_argument("--lambda-cycle", type=float, default=10.0,
                    help="CycleGAN L1 cycle-consistency weight (0 removes it)")
@@ -101,6 +106,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    if args.seed is not None:
+        # Before anything draws a random number: weight init, the loader's
+        # shuffle order and the image pools all follow from here.
+        import random
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
+        torch.cuda.manual_seed_all(args.seed)
+        print("[seed] %d" % args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     dataset = UnpairedDataset(
