@@ -45,6 +45,7 @@
 #
 #   MARKERS=VS SPLIT=testA bash split_eval.sh split
 #   MARKER=VS SPLIT=testA bash split_eval.sh select_cpa     # after evaluate_cpa.sh
+#   MARKER=VS SPLIT=testA REGION=2048 bash split_eval.sh select_cpa   # per 2048 px region
 #   sbatch --partition=paula --array=<task> \
 #       --export=ALL,MARKER=VS,SPLIT=testA,ARM=main,HALF=test,MIN_TISSUE=0.1 split_eval.sh fid
 #
@@ -91,8 +92,11 @@ select)
 select_cpa)
     # VS: rank the TopoCycleGAN cells on the sel half by CPA MAE against the
     # real SR, report the chosen one on the test half. See tools/select_cpa.py.
+    # REGION=2048 scores CPA per 2048 px region instead of per slide (see
+    # tools/select_cpa.py); CPA_MIN_TISSUE sets the tissue a region needs.
     "$PY3" "${REPO_ROOT}/tools/select_cpa.py" \
-        --eval-dir "${EVAL_ROOT}/${MARKER:-VS}/${SPLIT}"
+        --eval-dir "${EVAL_ROOT}/${MARKER:-VS}/${SPLIT}" \
+        --region "${REGION:-wsi}" --min-tissue "${CPA_MIN_TISSUE:-0.25}"
     ;;
 
 fid)

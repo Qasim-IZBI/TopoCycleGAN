@@ -416,6 +416,15 @@ sbatch --dependency=afterok:$ref evaluate_cpa.sh           # ARM=main, 0-14
 MARKER=VS SPLIT=testA bash split_eval.sh select_cpa      # choose on sel, report on test
 ```
 
+With 10 slides per half the whole-slide MAE is noisy, and a model too high in
+one place and too low in another can still match on the whole slide.
+`REGION=2048` scores CPA per 2048 px region instead. Each slide's error is the
+tissue-weighted mean over its regions, every slide counts equally, and the
+bootstrap still resamples slides. The scored regions are those with at least
+`CPA_MIN_TISSUE` (0.25) tissue in the real SR. Every run also prints a scan
+over whole slide, 1024, 2048 and 4096 px, showing how far the sel-half ranking
+holds on the test half. Fix the scale for the paper from that scan.
+
 ## Estimating stain vectors
 
 The vectors in `fields.STAIN_VECTORS` are literature defaults, fitted to nobody's
