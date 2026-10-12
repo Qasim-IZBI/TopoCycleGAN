@@ -95,8 +95,13 @@
 # A metric whose CSV already exists is skipped; FORCE=1 recomputes. A model
 # with no predictions yet exits clean.
 #
-# Paired metrics need a registered truth: VS has none, so for VS set
-# METRICS=fid and TRUTH to a directory of real target tiles.
+# Paired metrics need a registered truth. VS's is the 20 registered UC test
+# slides, laid out by prepare_vs_test.sh as TrainValAB/testA and testB with the
+# H&E tissue masks beside the SR tiles, so the zoo's tissue filter applies:
+#
+#   sbatch --partition=paula --export=ALL,MARKER=VS,SPLIT=testA,MIN_TISSUE=0.1 evaluate.sh
+#
+# VS's task metric, collagen area per slide, is evaluate_cpa.sh's.
 #
 # Output: ${EVAL_ROOT}/<marker>/<split>/<arm>/<name>/{fid,patch_ssim,lpips}.csv
 #         ${EVAL_ROOT}/<marker>/<split>/summary.csv   (from `summary`; it also

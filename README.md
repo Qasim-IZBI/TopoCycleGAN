@@ -381,6 +381,41 @@ is not on the slide. A fixed arm built from vectors the table cannot express doe
 not test the literature — it adds a wrong answer the decision rule may then pick.
 `VECTOR_ARMS=estimated` drops it, halving the array.
 
+### VS test set and its task metric (CPA)
+
+The configuration for VS is chosen on the 20 registered UC test slides, not on
+the five registered validation cases. `prepare_vs_test.sh` links them into
+`VS_tiles/VS/TrainValAB/{testA,testB}`, kept per slide
+(`<case>/images/<tile>.tif`), after checking that both stains were tiled on the
+same grid. It also links the H&E tissue masks next to the SR tiles, so FID,
+patch SSIM and LPIPS (`evaluate.sh` with `SPLIT=testA MIN_TISSUE=0.1`) are
+scored on tissue.
+
+The task metric is the zoo paper's: the **collagen proportionate area (CPA)** of
+each whole slide, generated vs real SR, segmented by the frozen nnU-Net
+`Dataset314_SR_light`. The paper used CPA MAE. The old pipeline stitched every
+slide, segmented it whole, applied the H&E mask, filled holes and counted.
+`tools/cpa_eval.py` (`evaluate_cpa.sh`) gets the same counts tile by tile, with
+nothing stitched on disk:
+
+- nnU-Net's sliding window is walked over the slide as nnU-Net would walk it,
+  with the same crop, steps, Gaussian and mirroring.
+- The slide-level z-score comes from a first pass over the slide's tiles.
+- Holes that span tiles are found with a union-find over the tile edges.
+
+The streaming result matches a stitched whole-slide computation exactly on
+synthetic slides. `evaluate_cpa.sh check` compares it with the old pipeline's
+whole-slide masks.
+
+```bash
+bash prepare_vs_test.sh
+MARKERS=VS SPLIT=testA bash split_eval.sh split          # 10 / 10 slides
+ref=$(sbatch --parsable --array=0 evaluate_cpa.sh ref)     # real SR, once
+sbatch --dependency=afterok:$ref --array=0 evaluate_cpa.sh check
+sbatch --dependency=afterok:$ref evaluate_cpa.sh           # ARM=main, 0-14
+MARKER=VS SPLIT=testA bash split_eval.sh select_cpa      # choose on sel, report on test
+```
+
 ## Estimating stain vectors
 
 The vectors in `fields.STAIN_VECTORS` are literature defaults, fitted to nobody's

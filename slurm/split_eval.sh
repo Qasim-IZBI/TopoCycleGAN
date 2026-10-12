@@ -40,6 +40,14 @@
 #
 #    then `bash split_eval.sh select` again fills the FID column.
 #
+# VS (H&E -> Sirius Red) is chosen on its own task metric, CPA, over the 20
+# registered test slides (prepare_vs_test.sh), split by slide 10/10:
+#
+#   MARKERS=VS SPLIT=testA bash split_eval.sh split
+#   MARKER=VS SPLIT=testA bash split_eval.sh select_cpa     # after evaluate_cpa.sh
+#   sbatch --partition=paula --array=<task> \
+#       --export=ALL,MARKER=VS,SPLIT=testA,ARM=main,HALF=test,MIN_TISSUE=0.1 split_eval.sh fid
+#
 # Output: <eval>/<marker>/<split>/val_test_split.csv,
 #         <eval>/<marker>/<split>/<arm>/<name>/fid_<half>.csv,
 #         <eval>/selection/{selection.json, sel_ranking.csv, test_report.csv,
@@ -80,6 +88,13 @@ select)
         ${REPORT_MARKERS:+--report-markers $REPORT_MARKERS}
     ;;
 
+select_cpa)
+    # VS: rank the TopoCycleGAN cells on the sel half by CPA MAE against the
+    # real SR, report the chosen one on the test half. See tools/select_cpa.py.
+    "$PY3" "${REPO_ROOT}/tools/select_cpa.py" \
+        --eval-dir "${EVAL_ROOT}/${MARKER:-VS}/${SPLIT}"
+    ;;
+
 fid)
     : "${MARKER:?set MARKER}"
     HALF=${HALF:?set HALF=test or HALF=sel}
@@ -114,28 +129,52 @@ fid)
     # Strip any \r first: a CSV written with \r\n endings would otherwise
     # leave "test\r" in the half column, and no tile would match.
     awk -F, -v h="$HALF" '{ sub(/\r$/, "") } NR > 1 && $3 == h { print $1 }' "$SPLIT_CSV" > "$work/stems"
+    # Stems are file names for a flat split and relative paths
+    # (<case>/images/<tile>) for a per-slide one such as VS's test set; the
+    # links keep that path, which is what i2i-evaluate pairs on. masks/ is
+    # pruned -- in a per-slide truth tree it is a link to the H&E masks, not
+    # a set of SR images.
     link_half() {   # <src dir> <dst dir>: link every image whose stem is listed
-        local src="$1" dst="$2" f
-        ls "$src" | awk 'NR == FNR { keep[$0]; next }
-                         { stem = $0; sub(/\.[^.]*$/, "", stem); if (stem in keep) print }' \
-                        "$work/stems" - |
-        while IFS= read -r f; do ln -s "$src/$f" "$dst/$f"; done
+        local src="$1" dst="$2" f d last=""
+        (cd "$src" && find . -name masks -prune -o \( -type f -o -type l \) -print) |
+        sed 's|^\./||' |
+        awk 'NR == FNR { keep[$0]; next }
+             { stem = $0; sub(/\.[^.\/]*$/, "", stem); if (stem in keep) print }' \
+            "$work/stems" - |
+        while IFS= read -r f; do
+            d=$(dirname "$f")
+            if [ "$d" != "$last" ]; then mkdir -p "$dst/$d"; last=$d; fi
+            ln -s "$src/$f" "$dst/$f"
+        done
     }
     link_half "$TRUTH" "$work/real"
     link_half "$PRED" "$work/fake"
-    n_real=$(ls "$work/real" | wc -l | tr -d ' ')
-    n_fake=$(ls "$work/fake" | wc -l | tr -d ' ')
+    # The truth's per-case masks/ (the tissue filter's), linked whole: a
+    # directory link is not walked, so it is found per tile but never scored.
+    for d in "$work"/real/*/; do
+        c=$(basename "$d")
+        if [ -e "$TRUTH/$c/masks" ]; then
+            ln -s "$(cd "$TRUTH/$c/masks" && pwd -P)" "$d/masks"
+        fi
+    done
+    n_real=$(find "$work/real" -name masks -prune -o -type l -print | wc -l | tr -d ' ')
+    n_fake=$(find "$work/fake" -type l | wc -l | tr -d ' ')
     echo "  ${HALF} half: ${n_real} real, ${n_fake} generated tiles"
     [ "$n_fake" -gt 0 ] || { echo "ERROR: no generated tile is in the ${HALF} half" >&2; exit 1; }
 
+    # MIN_TISSUE as in evaluate.sh: the zoo's tissue filter, on the truth's masks.
+    tissue_args=()
+    if [ -n "${MIN_TISSUE:-}" ]; then tissue_args+=(--min_tissue_fraction "$MIN_TISSUE"); fi
+
     mkdir -p "$OUT"
     i2i-evaluate --metric fid --path_real "$work/real" --path_fake "$work/fake" \
-        --device cuda --num_workers "${SLURM_CPUS_PER_TASK:-4}" --save_csv "$CSV"
+        --device cuda --num_workers "${SLURM_CPUS_PER_TASK:-4}" \
+        ${tissue_args[@]+"${tissue_args[@]}"} --save_csv "$CSV"
     echo "Done: ${CSV}"
     ;;
 
 *)
-    echo "ERROR: unknown mode '${MODE}' -- split, select or fid" >&2
+    echo "ERROR: unknown mode '${MODE}' -- split, select, select_cpa or fid" >&2
     exit 1
     ;;
 esac
