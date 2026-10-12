@@ -65,6 +65,16 @@ BEST_RUN=${BEST_RUN:-lt0.002_cyc1_trans1}   # the chosen cell, by its run-name s
 BEST_ARM_ROOT=${BEST_ARM_ROOT:-}            # default Outputs_<marker> (merged, best field)
 MODELS=(topo cyclegan dclgan)
 PY3=${PY3:-python3}
+# A schedule VARIANT of the TopoCycleGAN members, not a repeat: TOPO_START /
+# TOPO_WARMUP override what seed 0 recorded. Seed 0 then trains too (the
+# existing run has the old schedule), and the variant must live under its own
+# ENS_ROOT so it never mixes with the real ensemble:
+#
+#   sbatch --array=0-9 --export=ALL,MARKER=Ki67,TOPO_START=0,ENS_ROOT=/work2/bz66izin-TopoCG/ensemble_start0 train_ensemble.sh
+TOPO_START=${TOPO_START:-}
+TOPO_WARMUP=${TOPO_WARMUP:-}
+VARIANT=0
+[ -n "${TOPO_START}${TOPO_WARMUP}" ] && VARIANT=1
 
 # Where each model's seed-0 run and its predictions live.
 seed0_paths() {   # <model> -> sets SRC_RUN, SRC_PREDS
@@ -181,7 +191,13 @@ if [ ! -f "${SRC_RUN}/training_meta.json" ]; then
     exit 1
 fi
 
-if [ "$SEED" = "0" ]; then
+if (( VARIANT )); then
+    [ "$model" = "topo" ] || { echo "TOPO_START/TOPO_WARMUP apply to TopoCycleGAN (tasks 0-9) only" >&2; exit 1; }
+    [ "$ENS_ROOT" != "${ROOT}/ensemble" ] || {
+        echo "ERROR: a schedule variant needs its own ENS_ROOT, not ${ENS_ROOT}" >&2; exit 1; }
+fi
+
+if [ "$SEED" = "0" ] && (( ! VARIANT )); then
     # The existing run IS seed 0: link it, and its predictions, into the layout.
     mkdir -p "${MODEL_DIR}/results" "${MODEL_DIR}/preds"
     ln -sfn "$SRC_RUN" "$OUTPUT"
@@ -234,6 +250,9 @@ while IFS= read -r a; do RUN_ARGS+=("$a"); done < <(
     "$PY3" "${REPO_ROOT}/tools/run_args.py" "${SRC_RUN}/training_meta.json" \
         --stains-out "${OUTPUT}/stains.json")
 (( ${#RUN_ARGS[@]} )) || { echo "ERROR: no settings read from ${SRC_RUN}" >&2; exit 1; }
+# After seed 0's own flags, so these win (argparse keeps the last).
+[ -n "$TOPO_START" ]  && RUN_ARGS+=(--topo-start-step "$TOPO_START")
+[ -n "$TOPO_WARMUP" ] && RUN_ARGS+=(--topo-warmup-steps "$TOPO_WARMUP")
 
 echo "Running command:"
 printf ' %q' topo-train --dataA "${DATA_DIR}/trainA/" --dataB "${DATA_DIR}/trainB/" \

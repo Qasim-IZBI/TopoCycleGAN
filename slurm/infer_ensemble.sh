@@ -95,7 +95,9 @@ if [ ! -d "$VAL_A" ]; then
     exit 1
 fi
 
-if [ "$SEED" = "0" ] && [ -d "$SRC_PREDS" ]; then
+# Only where seed 0 is the linked existing run -- a schedule variant trained
+# its own seed 0 (a real directory), which is inferred like the rest.
+if [ "$SEED" = "0" ] && [ -d "$SRC_PREDS" ] && { [ -L "$RUN_DIR" ] || [ ! -e "$RUN_DIR" ]; }; then
     mkdir -p "$PRED_ROOT"
     if [ ! -e "$OUT_DIR" ]; then
         ln -sfn "$SRC_PREDS" "$OUT_DIR"
