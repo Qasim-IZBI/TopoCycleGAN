@@ -88,7 +88,7 @@ if [ "$MODE" = "missing" ]; then
     # Every arm and the tasks it has -- the same lists as the header.
     ARM_TASKS="main:0-14 identity:0 cycsplit:2,3,5,6,8,9,11,12
                worstfield_cycmerged:1-12 worstfield_cycsplit:2,3,5,6,8,9,11,12
-               baselines:0-5"
+               baselines:0-5 ensemble:0-29"
     expand() {     # "0-3,7" -> "0 1 2 3 7"
         local part out=""
         for part in ${1//,/ }; do

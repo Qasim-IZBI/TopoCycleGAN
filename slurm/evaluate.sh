@@ -42,6 +42,11 @@
 #   ARM=identity             --array=0
 #     the H&E input itself scored as the prediction -- the "do nothing" row.
 #
+#   ARM=ensemble             --array=0-29
+#     the deep-ensemble members, numbered as train_ensemble.sh (0-9 topo,
+#     10-19 cyclegan small, 20-29 dclgan small); tools/ensemble_report.py
+#     summarises them.
+#
 # The arms are defined in _eval_arms.sh, which evaluate_nuclei.sh sources too,
 # so task N is the same model in both and their results share a directory.
 #

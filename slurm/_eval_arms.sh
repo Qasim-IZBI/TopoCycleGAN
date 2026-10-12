@@ -13,6 +13,9 @@
 #   ARM=baselines             0-2 cyclegan, 3-5 dclgan, small/medium/large
 #   ARM=identity              task 0: the H&E input itself, scored as if it
 #                             were the prediction -- the "do nothing" model
+#   ARM=ensemble              the deep-ensemble members, numbered as
+#                             train_ensemble.sh: 0-9 TopoCycleGAN, 10-19
+#                             cyclegan small, 20-29 dclgan small (seed = N % 10)
 #
 # PRED and NAME set by the caller score any other directory, under ARM=custom.
 
@@ -99,6 +102,15 @@ else
                 *) not_in_arm "baselines are tasks 0-5" ;;
             esac
             ;;
+        ensemble)
+            if (( TASK_ID < 0 || TASK_ID > 29 )); then
+                not_in_arm "ensemble members are tasks 0-29"
+            fi
+            _ens_models=(topo cyclegan dclgan)
+            _ens_model=${_ens_models[$(( TASK_ID / 10 ))]}
+            NAME="${MARKER}_${_ens_model}_seed$(( TASK_ID % 10 ))"
+            PRED="$(preds_root_of "${ENS_ROOT:-${ROOT}/ensemble}/${MARKER}/${_ens_model}")/seed$(( TASK_ID % 10 ))"
+            ;;
         identity)
             # The input as its own prediction. Any metric that rewards it is
             # measuring structure kept, not IHC made -- this row says how much.
@@ -110,7 +122,8 @@ else
             ;;
         *)
             echo "ERROR: unknown ARM '${ARM}'" >&2
-            echo "  main, cycsplit, worstfield_cycmerged, worstfield_cycsplit, baselines or identity" >&2
+            echo "  main, cycsplit, worstfield_cycmerged, worstfield_cycsplit, baselines, identity" >&2
+            echo "  or ensemble" >&2
             echo "  (or set PRED and NAME for any other directory)" >&2
             exit 1
             ;;
