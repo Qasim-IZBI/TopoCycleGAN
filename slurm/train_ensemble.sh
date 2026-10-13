@@ -71,10 +71,18 @@ PY3=${PY3:-python3}
 # ENS_ROOT so it never mixes with the real ensemble:
 #
 #   sbatch --array=0-9 --export=ALL,MARKER=Ki67,TOPO_START=0,ENS_ROOT=/work2/bz66izin-TopoCG/ensemble_start0 train_ensemble.sh
+#
+# STEPS cuts the run short -- a SCREEN: a seed's collapse shows in its
+# loss_ph_trans_I by 3-10k steps, so 10k tells it at ~2.5% of a full run.
+# A screen saves no numbered checkpoint (those come every 100k) and is not
+# inferred; read its loss_log.csv.
+#
+#   sbatch --array=0-9 --time=06:00:00 --export=ALL,MARKER=Ki67,TOPO_START=0,TOPO_WARMUP=0,STEPS=10000,ENS_ROOT=/work2/bz66izin-TopoCG/screen_start0_warm0 train_ensemble.sh
 TOPO_START=${TOPO_START:-}
 TOPO_WARMUP=${TOPO_WARMUP:-}
+STEPS=${STEPS:-}
 VARIANT=0
-[ -n "${TOPO_START}${TOPO_WARMUP}" ] && VARIANT=1
+[ -n "${TOPO_START}${TOPO_WARMUP}${STEPS}" ] && VARIANT=1
 
 # Where each model's seed-0 run and its predictions live.
 seed0_paths() {   # <model> -> sets SRC_RUN, SRC_PREDS
@@ -128,6 +136,7 @@ if [ "${1:-}" = "status" ]; then
             seed0_paths "$model"
             target=$(grep -o '"total_steps": *[0-9]*' "${SRC_RUN}/training_meta.json" 2>/dev/null \
                      | grep -o '[0-9]*$' || echo 400000)
+            target=${STEPS:-$target}
             line="  ${model}"
             for k in 0 1 2 3 4 5 6 7 8 9; do
                 run="${ENS_ROOT}/${MARKER}/${model}/results/seed${k}"
@@ -192,7 +201,7 @@ if [ ! -f "${SRC_RUN}/training_meta.json" ]; then
 fi
 
 if (( VARIANT )); then
-    [ "$model" = "topo" ] || { echo "TOPO_START/TOPO_WARMUP apply to TopoCycleGAN (tasks 0-9) only" >&2; exit 1; }
+    [ "$model" = "topo" ] || { echo "TOPO_START/TOPO_WARMUP/STEPS apply to TopoCycleGAN (tasks 0-9) only" >&2; exit 1; }
     [ "$ENS_ROOT" != "${ROOT}/ensemble" ] || {
         echo "ERROR: a schedule variant needs its own ENS_ROOT, not ${ENS_ROOT}" >&2; exit 1; }
 fi
@@ -253,6 +262,7 @@ while IFS= read -r a; do RUN_ARGS+=("$a"); done < <(
 # After seed 0's own flags, so these win (argparse keeps the last).
 [ -n "$TOPO_START" ]  && RUN_ARGS+=(--topo-start-step "$TOPO_START")
 [ -n "$TOPO_WARMUP" ] && RUN_ARGS+=(--topo-warmup-steps "$TOPO_WARMUP")
+[ -n "$STEPS" ]       && RUN_ARGS+=(--steps "$STEPS")
 
 echo "Running command:"
 printf ' %q' topo-train --dataA "${DATA_DIR}/trainA/" --dataB "${DATA_DIR}/trainB/" \
