@@ -21,6 +21,7 @@ from i2i_stain_zoo.datasets.transforms import default_train_transform
 from i2i_stain_zoo.datasets.unpaired_dataset import UnpairedDataset
 from i2i_stain_zoo.trainer.base_trainer import BaseTrainer
 
+from topo_i2i.layout import attach as attach_layout
 from topo_i2i.fields import FIELD_PRESETS, STAIN_VECTORS, resolve_fields
 from topo_i2i.stains import load_vectors
 from topo_i2i.models import TopoConfig, TopoCycleGAN, TopoCycleGANConfig
@@ -51,6 +52,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--lambda-identity", type=float, default=0.5,
                    help="CycleGAN identity weight; note this is the OTHER content "
                         "constraint and stays on when --lambda-cycle is 0")
+    p.add_argument("--lambda-layout", type=float, default=0.0,
+                   help="weight of the layout-consistency term (topo_i2i/layout.py), "
+                        "which stops the translation inverting tissue and lumen; "
+                        "0 = off. Recorded in <output>/layout.json, not the config")
 
     g = p.add_argument_group("topological loss")
     g.add_argument("--lambda-topo", type=float, default=1.0,
@@ -161,6 +166,7 @@ def main() -> None:
         vectors_B=vectors_B,
         ))
     model = TopoCycleGAN(cfg).to(device)
+    attach_layout(model, args.lambda_layout, args.output)
 
     trainer = BaseTrainer(
         model=model, dataloader=loader, device=device,

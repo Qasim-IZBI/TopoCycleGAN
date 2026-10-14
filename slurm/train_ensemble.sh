@@ -72,17 +72,23 @@ PY3=${PY3:-python3}
 #
 #   sbatch --array=0-9 --export=ALL,MARKER=Ki67,TOPO_START=0,ENS_ROOT=/work2/bz66izin-TopoCG/ensemble_start0 train_ensemble.sh
 #
-# STEPS cuts the run short -- a SCREEN: a seed's collapse shows in its
-# loss_ph_trans_I by 3-10k steps, so 10k tells it at ~2.5% of a full run.
-# A screen saves no numbered checkpoint (those come every 100k) and is not
-# inferred; read its loss_log.csv.
+# LAMBDA_LAYOUT adds the layout-consistency term (topo_i2i/layout.py) that
+# stops a run inverting tissue and lumen -- to all three models, so they stay
+# comparable.
 #
-#   sbatch --array=0-9 --time=06:00:00 --export=ALL,MARKER=Ki67,TOPO_START=0,TOPO_WARMUP=0,STEPS=10000,ENS_ROOT=/work2/bz66izin-TopoCG/screen_start0_warm0 train_ensemble.sh
+# STEPS cuts every member short -- a SCREEN: whether a run inverts is settled
+# in its first few thousand steps, so 10k tells it at ~2.5% of a full run. A
+# screen saves a checkpoint at its last step; infer it with infer_ensemble.sh
+# given the same STEPS, then count the inverted members with
+# tools/invert_check.py.
+#
+#   sbatch --array=0-29 --time=06:00:00 --export=ALL,MARKER=Ki67,LAMBDA_LAYOUT=1,STEPS=10000,ENS_ROOT=/work2/bz66izin-TopoCG/screen_layout1 train_ensemble.sh
 TOPO_START=${TOPO_START:-}
 TOPO_WARMUP=${TOPO_WARMUP:-}
 STEPS=${STEPS:-}
+LAMBDA_LAYOUT=${LAMBDA_LAYOUT:-}
 VARIANT=0
-[ -n "${TOPO_START}${TOPO_WARMUP}${STEPS}" ] && VARIANT=1
+[ -n "${TOPO_START}${TOPO_WARMUP}${STEPS}${LAMBDA_LAYOUT}" ] && VARIANT=1
 
 # Where each model's seed-0 run and its predictions live.
 seed0_paths() {   # <model> -> sets SRC_RUN, SRC_PREDS
@@ -201,9 +207,11 @@ if [ ! -f "${SRC_RUN}/training_meta.json" ]; then
 fi
 
 if (( VARIANT )); then
-    [ "$model" = "topo" ] || { echo "TOPO_START/TOPO_WARMUP/STEPS apply to TopoCycleGAN (tasks 0-9) only" >&2; exit 1; }
+    if [ "$model" != "topo" ] && [ -n "${TOPO_START}${TOPO_WARMUP}" ]; then
+        echo "TOPO_START/TOPO_WARMUP apply to TopoCycleGAN (tasks 0-9) only" >&2; exit 1
+    fi
     [ "$ENS_ROOT" != "${ROOT}/ensemble" ] || {
-        echo "ERROR: a schedule variant needs its own ENS_ROOT, not ${ENS_ROOT}" >&2; exit 1; }
+        echo "ERROR: a variant needs its own ENS_ROOT, not ${ENS_ROOT}" >&2; exit 1; }
 fi
 
 if [ "$SEED" = "0" ] && (( ! VARIANT )); then
@@ -229,9 +237,11 @@ if [ "$model" != "topo" ]; then
     # into the ensemble layout. It resumes, loads the env and checks the data.
     # The tile roots go with it explicitly: it has defaults of its own, and the
     # two scripts must not be able to disagree about the training data.
+    # A variant's STEPS and LAMBDA_LAYOUT go with it; otherwise its defaults.
     MODEL=$model SIZE=small MARKER=$MARKER SEED=$SEED \
         BASE="$MODEL_DIR" RUN_NAME="seed${SEED}" \
         TILES="$TILES" TILES_BCI="$TILES_BCI" TILES_VS="$TILES_VS" \
+        STEPS="${STEPS:-400000}" SAVE_STEPS="${STEPS:-100000}" LAMBDA_LAYOUT="$LAMBDA_LAYOUT" \
         bash "${REPO}/train_baseline.sh"
     exit 0
 fi
@@ -262,7 +272,8 @@ while IFS= read -r a; do RUN_ARGS+=("$a"); done < <(
 # After seed 0's own flags, so these win (argparse keeps the last).
 [ -n "$TOPO_START" ]  && RUN_ARGS+=(--topo-start-step "$TOPO_START")
 [ -n "$TOPO_WARMUP" ] && RUN_ARGS+=(--topo-warmup-steps "$TOPO_WARMUP")
-[ -n "$STEPS" ]       && RUN_ARGS+=(--steps "$STEPS")
+[ -n "$STEPS" ]         && RUN_ARGS+=(--steps "$STEPS" --save-steps "$STEPS")
+[ -n "$LAMBDA_LAYOUT" ] && RUN_ARGS+=(--lambda-layout "$LAMBDA_LAYOUT")
 
 echo "Running command:"
 printf ' %q' topo-train --dataA "${DATA_DIR}/trainA/" --dataB "${DATA_DIR}/trainB/" \

@@ -215,6 +215,7 @@ run_cmd topo-baseline \
     --log_steps "$LOG_STEPS" \
     --seed "$SEED" \
     "${size_args[@]}" \
+    ${LAMBDA_LAYOUT:+--lambda-layout "$LAMBDA_LAYOUT"} \
     ${AMP:+--amp}
 
 echo "Done: ${RUN_NAME}"

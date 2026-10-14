@@ -114,6 +114,7 @@ fi
 # The step budget is the seed-0 run's, as train_ensemble.sh status reads it.
 target=$(grep -o '"total_steps": *[0-9]*' "${SRC_RUN}/training_meta.json" 2>/dev/null \
          | grep -o '[0-9]*$' || echo 400000)
+target=${STEPS:-$target}     # a screen's shorter budget, as train_ensemble.sh
 shopt -s nullglob
 CKPT=""; step=0
 for f in "${RUN_DIR}/checkpoints"/step_[0-9]*.pt; do
