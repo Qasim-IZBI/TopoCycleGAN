@@ -10,6 +10,10 @@ MEMBERS   every seed's nuclei recall / precision / F1, SSIM, LPIPS, FID, and
 SPREAD    mean, standard deviation, min and max over the seeds, and how many
           of them collapsed. Collapsed seeds are counted at their real value:
           how often a model fails to train is part of what it is.
+INVERTED  how many seeds invert the tissue / lumen layout -- the cause of the
+          collapse -- read from the inversion.csv tools/invert_check.py
+          --ensemble writes beside each member's results. Sharper than the
+          recall cut-off, and the one to use where recall is not bimodal (BCI).
 VERSUS    mean recall of TopoCycleGAN minus that of each baseline, with a 95%
           interval from a two-level bootstrap: resample the slides (paired --
           one resample feeds every model), then each model's seeds. It covers
@@ -85,6 +89,17 @@ def two_level_diff(a: List[Dict[str, Tuple[int, int]]], b: List[Dict[str, Tuple[
     return stat(slides, a, b), boots[int(0.025 * n_boot)], boots[int(0.975 * n_boot) - 1]
 
 
+def inverted_of(member_dir: str) -> Optional[int]:
+    """1 / 0 from tools/invert_check.py's inversion.csv, None if not checked."""
+    path = os.path.join(member_dir, "inversion.csv")
+    if not os.path.isfile(path):
+        return None
+    for row in read_rows(path)[1:]:
+        if row and row[0] == "inverted":
+            return int(float(row[1]))
+    return None
+
+
 def fmt(v, d=4):
     return ("%." + str(d) + "f") % v if v is not None else "-"
 
@@ -133,20 +148,22 @@ def main() -> None:
             nuc = mod.nuclei(half) or {}
             vals = {"recall": nuc.get("recall"), "precision": nuc.get("precision"),
                     "f1": nuc.get("f1"), "patch_ssim": mod.mean("patch_ssim", half),
-                    "lpips": mod.mean("lpips", half), "fid": fid_of(mod, half)}
+                    "lpips": mod.mean("lpips", half), "fid": fid_of(mod, half),
+                    "inverted": inverted_of(os.path.join(ens_dir, name))}
             members[mm.group("model")].append((int(mm.group("k")), mod, vals))
 
         print("\n== %s / %s, %s half   (recall at r=%s px; collapsed = recall < %g)"
               % (marker, args.split, half, args.radius, args.fail_below))
-        print("  %-15s %5s  %-15s %6s  %-15s %-15s %-15s %-17s %-15s %s"
+        print("  %-15s %5s  %-15s %6s  %-15s %-15s %-15s %-17s %-15s %-9s %s"
               % ("model", "seeds", "recall", "min", "precision", "F1", "SSIM", "LPIPS", "FID",
-                 "collapsed"))
+                 "collapsed", "inverted"))
         for key, nice in MODELS:
             ms = sorted(members[key], key=lambda t: t[0])
             for k, mod, vals in ms:
                 member_rows.append([marker, args.split, half, key, k,
                                     *(fmt(vals[m], 5) for m in METRICS),
-                                    int(vals["recall"] is not None and vals["recall"] < args.fail_below)])
+                                    int(vals["recall"] is not None and vals["recall"] < args.fail_below),
+                                    "" if vals["inverted"] is None else vals["inverted"]])
             cells, row = [], [marker, args.split, half, key, len(ms)]
             for m in METRICS:
                 v = [vals[m] for _, _, vals in ms if vals[m] is not None]
@@ -162,10 +179,12 @@ def main() -> None:
                     row += ["", "", "", "", 0]
             recs = [vals["recall"] for _, _, vals in ms if vals["recall"] is not None]
             n_fail = sum(r < args.fail_below for r in recs)
-            row.append(n_fail)
+            inv = [vals["inverted"] for _, _, vals in ms if vals["inverted"] is not None]
+            row += [n_fail, sum(inv) if inv else "", len(inv)]
             spread_rows.append(row)
-            print("  %-15s %5d  %-15s %6s  %-15s %-15s %-15s %-17s %-15s %d/%d"
-                  % (nice, len(ms), *cells, n_fail, len(recs)))
+            print("  %-15s %5d  %-15s %6s  %-15s %-15s %-15s %-17s %-15s %-9s %s"
+                  % (nice, len(ms), *cells, "%d/%d" % (n_fail, len(recs)),
+                     "%d/%d" % (sum(inv), len(inv)) if inv else "-"))
 
         topo = [mod.slide_sums(half) for _, mod, vals in members["topo"] if vals["recall"] is not None]
         for key, nice in MODELS[1:]:
@@ -185,11 +204,12 @@ def main() -> None:
             w.writerow(head)
             w.writerows(rows)
 
-    write("members.csv", ["marker", "split", "half", "model", "seed", *METRICS, "collapsed"],
-          member_rows)
+    write("members.csv", ["marker", "split", "half", "model", "seed", *METRICS, "collapsed",
+                          "inverted"], member_rows)
     write("spread.csv", ["marker", "split", "half", "model", "seeds",
                          *("%s_%s" % (m, s) for m in METRICS
-                           for s in ("mean", "sd", "min", "max", "n")), "collapsed"], spread_rows)
+                           for s in ("mean", "sd", "min", "max", "n")), "collapsed",
+                          "inverted", "inverted_n"], spread_rows)
     write("versus.csv", ["marker", "split", "half", "baseline", "topo_seeds", "baseline_seeds",
                          "recall_diff", "ci_low", "ci_high"], versus_rows)
     print("\nwritten under %s" % out_dir)
