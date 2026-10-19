@@ -74,7 +74,11 @@ PY3=${PY3:-python3}
 #
 # LAMBDA_LAYOUT adds the layout-consistency term (topo_i2i/layout.py) that
 # stops a run inverting tissue and lumen -- to all three models, so they stay
-# comparable.
+# comparable. LAYOUT_STOP switches it off after that many steps: the inversion
+# is settled within ~3k steps, and kept on for a whole run the term costs
+# nuclei precision and SSIM. It is still logged (loss_layout) after the stop.
+#
+#   sbatch --export=ALL,MARKER=Ki67,LAMBDA_LAYOUT=1,LAYOUT_STOP=20000,ENS_ROOT=/work2/bz66izin-TopoCG/ensemble_layout1_stop20k train_ensemble.sh
 #
 # STEPS cuts every member short -- a SCREEN: whether a run inverts is settled
 # in its first few thousand steps, so 10k tells it at ~2.5% of a full run. A
@@ -87,8 +91,12 @@ TOPO_START=${TOPO_START:-}
 TOPO_WARMUP=${TOPO_WARMUP:-}
 STEPS=${STEPS:-}
 LAMBDA_LAYOUT=${LAMBDA_LAYOUT:-}
+LAYOUT_STOP=${LAYOUT_STOP:-}
 VARIANT=0
-[ -n "${TOPO_START}${TOPO_WARMUP}${STEPS}${LAMBDA_LAYOUT}" ] && VARIANT=1
+[ -n "${TOPO_START}${TOPO_WARMUP}${STEPS}${LAMBDA_LAYOUT}${LAYOUT_STOP}" ] && VARIANT=1
+if [ -n "$LAYOUT_STOP" ] && [ -z "$LAMBDA_LAYOUT" ]; then
+    echo "ERROR: LAYOUT_STOP needs LAMBDA_LAYOUT" >&2; exit 1
+fi
 
 # Where each model's seed-0 run and its predictions live.
 seed0_paths() {   # <model> -> sets SRC_RUN, SRC_PREDS
@@ -237,12 +245,12 @@ if [ "$model" != "topo" ]; then
     # into the ensemble layout. It resumes, loads the env and checks the data.
     # The tile roots go with it explicitly: it has defaults of its own, and the
     # two scripts must not be able to disagree about the training data.
-    # A variant's STEPS and LAMBDA_LAYOUT go with it; otherwise its defaults.
+    # A variant's STEPS and layout settings go with it; otherwise its defaults.
     MODEL=$model SIZE=small MARKER=$MARKER SEED=$SEED \
         BASE="$MODEL_DIR" RUN_NAME="seed${SEED}" \
         TILES="$TILES" TILES_BCI="$TILES_BCI" TILES_VS="$TILES_VS" \
         STEPS="${STEPS:-400000}" SAVE_STEPS="${STEPS:-100000}" LAMBDA_LAYOUT="$LAMBDA_LAYOUT" \
-        bash "${REPO}/train_baseline.sh"
+        LAYOUT_STOP="$LAYOUT_STOP" bash "${REPO}/train_baseline.sh"
     exit 0
 fi
 
@@ -274,6 +282,7 @@ while IFS= read -r a; do RUN_ARGS+=("$a"); done < <(
 [ -n "$TOPO_WARMUP" ] && RUN_ARGS+=(--topo-warmup-steps "$TOPO_WARMUP")
 [ -n "$STEPS" ]         && RUN_ARGS+=(--steps "$STEPS" --save-steps "$STEPS")
 [ -n "$LAMBDA_LAYOUT" ] && RUN_ARGS+=(--lambda-layout "$LAMBDA_LAYOUT")
+[ -n "$LAYOUT_STOP" ]   && RUN_ARGS+=(--layout-stop "$LAYOUT_STOP")
 
 echo "Running command:"
 printf ' %q' topo-train --dataA "${DATA_DIR}/trainA/" --dataB "${DATA_DIR}/trainB/" \

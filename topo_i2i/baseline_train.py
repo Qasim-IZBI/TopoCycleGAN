@@ -23,8 +23,9 @@ against the original.
 
 One option is added, --lambda-layout W: the layout-consistency term of
 topo_i2i/layout.py, attached to the model the zoo builds, so a baseline can be
-trained under the same anti-inversion constraint as TopoCycleGAN. It is taken
-off the command line before the zoo parses it; 0 (the default) changes nothing.
+trained under the same anti-inversion constraint as TopoCycleGAN, and with it
+--layout-stop N, which switches the term off after N steps. Both are taken off
+the command line before the zoo parses them; 0 (the default) changes nothing.
 
 Resuming is the whole point, so it is unconditional: point it at a directory
 holding checkpoints and it continues from the furthest-ahead one, preferring
@@ -54,22 +55,25 @@ def _train_resuming(self, total_steps: int):
 _train_resuming.__wrapped__ = BaseTrainer.train
 
 
-def _take_layout(argv: List[str]) -> Tuple[float, List[str]]:
-    """--lambda-layout W (or =W) out of argv, which the zoo would reject."""
-    weight, rest, i = 0.0, [], 0
+def _take_layout(argv: List[str]) -> Tuple[float, int, List[str]]:
+    """--lambda-layout W and --layout-stop N (or =value) out of argv, which the
+    zoo would reject."""
+    found = {"--lambda-layout": "0", "--layout-stop": "0"}
+    rest, i = [], 0
     while i < len(argv):
         a = argv[i]
-        if a == "--lambda-layout":
+        if a in found:
             if i + 1 >= len(argv):
-                raise SystemExit("--lambda-layout needs a value")
-            weight, i = float(argv[i + 1]), i + 2
+                raise SystemExit("%s needs a value" % a)
+            found[a], i = argv[i + 1], i + 2
             continue
-        if a.startswith("--lambda-layout="):
-            weight = float(a.split("=", 1)[1])
+        name = a.split("=", 1)[0]
+        if "=" in a and name in found:
+            found[name] = a.split("=", 1)[1]
         else:
             rest.append(a)
         i += 1
-    return weight, rest
+    return float(found["--lambda-layout"]), int(found["--layout-stop"]), rest
 
 
 def _output_of(argv: List[str]) -> Optional[str]:
@@ -82,7 +86,7 @@ def _output_of(argv: List[str]) -> Optional[str]:
 
 
 def main() -> None:
-    weight, sys.argv[1:] = _take_layout(sys.argv[1:])
+    weight, stop, sys.argv[1:] = _take_layout(sys.argv[1:])
     # Patch the method rather than reimplement the CLI around it. i2i-train
     # constructs BaseTrainer itself, deep inside its main(), so there is no
     # argument or subclass hook to pass a resuming trainer through -- and the
@@ -100,7 +104,7 @@ def main() -> None:
     if output is not None:
         # main() looks build_model up as a module global, so this reaches it.
         # Attached at weight 0 too: that refuses to resume a layout run without it.
-        zoo_train.build_model = lambda args: attach_layout(build_model(args), weight, output)
+        zoo_train.build_model = lambda args: attach_layout(build_model(args), weight, output, stop)
     try:
         zoo_train.main()
     finally:

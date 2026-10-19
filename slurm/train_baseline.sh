@@ -216,6 +216,7 @@ run_cmd topo-baseline \
     --seed "$SEED" \
     "${size_args[@]}" \
     ${LAMBDA_LAYOUT:+--lambda-layout "$LAMBDA_LAYOUT"} \
+    ${LAYOUT_STOP:+--layout-stop "$LAYOUT_STOP"} \
     ${AMP:+--amp}
 
 echo "Done: ${RUN_NAME}"

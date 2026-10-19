@@ -56,6 +56,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="weight of the layout-consistency term (topo_i2i/layout.py), "
                         "which stops the translation inverting tissue and lumen; "
                         "0 = off. Recorded in <output>/layout.json, not the config")
+    p.add_argument("--layout-stop", type=int, default=0,
+                   help="switch the layout term off after this many steps (it is "
+                        "still logged); 0 = keep it for the whole run")
 
     g = p.add_argument_group("topological loss")
     g.add_argument("--lambda-topo", type=float, default=1.0,
@@ -166,7 +169,7 @@ def main() -> None:
         vectors_B=vectors_B,
         ))
     model = TopoCycleGAN(cfg).to(device)
-    attach_layout(model, args.lambda_layout, args.output)
+    attach_layout(model, args.lambda_layout, args.output, args.layout_stop)
 
     trainer = BaseTrainer(
         model=model, dataloader=loader, device=device,
