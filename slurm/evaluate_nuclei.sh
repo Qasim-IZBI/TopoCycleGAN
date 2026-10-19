@@ -55,8 +55,24 @@
 # A model whose nuclei.csv exists is skipped; FORCE=1 recomputes it.
 # SAVE_MASKS=1 keeps every generated-IHC label mask (~10-20 MB per model).
 #
-# Output: ${EVAL_ROOT}/<marker>/<split>/<arm>/<name>/{nuclei.csv, nuclei_tiles.csv,
-#         nuclei_centroids.npz, figures/}  and  .../<split>/nuclei_ref/
+# OTHER DETECTORS. DETECTOR=instanseg or cpsam (tools/nuclei_detectors.py) runs
+# that open-weights model on both stains instead of StarDist, from its own
+# PyTorch environment (NUCLEI_ENV, default nuclei-torch) and weights copy
+# (MODELS_DIR, default ${ROOT}/nuclei_models) -- setup in nuclei_detectors.py.
+# Its results go to a nuclei_<detector>/ folder inside each model's directory,
+# beside StarDist's, which they never overwrite; its H&E reference is cached
+# apart too. Same two steps, every command given the same DETECTOR:
+#
+#   ref=$(sbatch --parsable --array=0 --export=ALL,MARKER=Ki67,DETECTOR=instanseg evaluate_nuclei.sh ref)
+#   sbatch --dependency=afterok:$ref --array=0-29 --export=ALL,MARKER=Ki67,ARM=ensemble,DETECTOR=instanseg evaluate_nuclei.sh
+#   python ../tools/ensemble_report.py --eval-root ... --markers Ki67 --detector instanseg
+#
+# Cellpose-SAM needs a GPU (~2 min a tile on CPU): add --gres=gpu:1 to every
+# sbatch with DETECTOR=cpsam. Without one the job stops rather than crawl
+# (ALLOW_CPU=1 overrides). InstanSeg is fine on CPU.
+#
+# Output: ${EVAL_ROOT}/<marker>/<split>/<arm>/<name>/[nuclei_<detector>/]{nuclei.csv,
+#         nuclei_tiles.csv, nuclei_centroids.npz, figures/}  and  .../<split>/nuclei_ref/
 
 set -eo pipefail
 
@@ -67,7 +83,12 @@ EVAL_ROOT=${EVAL_ROOT:-${ROOT}/eval}
 SPLIT=${SPLIT:-valA}
 EVAL_DIR="${EVAL_ROOT}/${MARKER}/${SPLIT}"
 REF_CACHE="${EVAL_DIR}/nuclei_ref"
-MODELS_DIR=${MODELS_DIR:-${ROOT}/stardist_models}
+DETECTOR=${DETECTOR:-stardist}
+case "$DETECTOR" in
+    stardist)        MODELS_DIR=${MODELS_DIR:-${ROOT}/stardist_models}; NUC_SUB="" ;;
+    instanseg|cpsam) MODELS_DIR=${MODELS_DIR:-${ROOT}/nuclei_models}; NUC_SUB="nuclei_${DETECTOR}" ;;
+    *) echo "ERROR: DETECTOR=${DETECTOR}; one of stardist, instanseg, cpsam" >&2; exit 1 ;;
+esac
 REPO_ROOT=${REPO_ROOT:-/home/sc.uni-leipzig.de/bz66izin/TopoCG_Project/TopoCycleGAN}
 EVAL_PY="${REPO_ROOT}/tools/nuclei_eval.py"
 FIGURES=${FIGURES:-12}
@@ -99,9 +120,11 @@ if [ "$MODE" = "missing" ]; then
         done
         echo $out
     }
-    if [ ! -d "${REF_CACHE}" ] || [ -z "$(ls -A "${REF_CACHE}" 2>/dev/null)" ]; then
+    # Every detector caches its reference in a folder of its own under REF_CACHE.
+    case "$DETECTOR" in stardist) ref_glob="he_rgb_x*" ;; *) ref_glob="${DETECTOR}_x*" ;; esac
+    if ! compgen -G "${REF_CACHE}/${ref_glob}" >/dev/null; then
         echo "${MARKER}: no H&E reference under ${REF_CACHE} -- run the ref job first:"
-        echo "  sbatch --array=0 --export=ALL,MARKER=${MARKER} evaluate_nuclei.sh ref"
+        echo "  sbatch --array=0 --export=ALL,MARKER=${MARKER},DETECTOR=${DETECTOR} evaluate_nuclei.sh ref"
         exit 0
     fi
     # A task still queued or running has no nuclei.csv yet either, and would
@@ -119,6 +142,7 @@ if [ "$MODE" = "missing" ]; then
         echo "      below includes theirs. Rerun this once they have finished."
         [ "${SUBMIT:-0}" = "1" ] && { echo "      Not submitting anything until then."; SUBMIT=0; }
     fi
+    [ "$DETECTOR" = "cpsam" ] && DETECTOR_GPU=1
     n_done=0 n_todo=0 n_nopred=0
     for spec in $ARM_TASKS; do
         arm=${spec%%:*}
@@ -132,7 +156,7 @@ if [ "$MODE" = "missing" ]; then
             case "$line" in *"|"*) ;; *) continue ;; esac
             pred=${line%%|*} name=${line#*|}
             [ -n "$name" ] || continue
-            if [ -f "${EVAL_DIR}/${arm}/${name}/nuclei.csv" ]; then
+            if [ -f "${EVAL_DIR}/${arm}/${name}/${NUC_SUB:+${NUC_SUB}/}nuclei.csv" ]; then
                 n_done=$((n_done + 1))
             elif [ -d "$pred" ]; then
                 todo+=("$t"); n_todo=$((n_todo + 1))
@@ -144,7 +168,8 @@ if [ "$MODE" = "missing" ]; then
         (( ${#todo[@]} )) || continue
         tasks=$(IFS=,; echo "${todo[*]}")
         cmd=(sbatch --time="${TIME:-02:00:00}" --array="$tasks" --job-name="topo_eval_nuclei_${MARKER}"
-             --export=ALL,MARKER="$MARKER",ARM="$arm" evaluate_nuclei.sh)
+             ${DETECTOR_GPU:+--gres=gpu:1}
+             --export=ALL,MARKER="$MARKER",ARM="$arm",DETECTOR="$DETECTOR" evaluate_nuclei.sh)
         if [ "${SUBMIT:-0}" = "1" ]; then
             echo "  -> $(cd "$_slurm" && "${cmd[@]}")"
         else
@@ -176,19 +201,44 @@ if command -v module >/dev/null 2>&1; then
     module purge
     module load Anaconda3/2025.06-1
     eval "$(conda shell.bash hook)"
-    conda activate "${STARDIST_ENV:-stardist}"
+    if [ "$DETECTOR" = "stardist" ]; then
+        conda activate "${STARDIST_ENV:-stardist}"
+    else
+        conda activate "${NUCLEI_ENV:-nuclei-torch}"
+    fi
 fi
 # The env's own interpreter, by path -- see nuclei_pilot.sh for why.
 PYTHON=${PYTHON:-${CONDA_PREFIX:+${CONDA_PREFIX}/bin/}python}
-"$PYTHON" -c "import stardist" 2>/dev/null || {
-    echo "ERROR: ${PYTHON} cannot import stardist; set PYTHON=~/.conda/envs/stardist/bin/python" >&2
-    exit 1; }
-for m in 2D_versatile_he 2D_versatile_fluo; do
-    [ -f "${MODELS_DIR}/${m}/weights_best.h5" ] || {
-        echo "ERROR: no ${m} under MODELS_DIR=${MODELS_DIR}; once, on the login node:" >&2
-        echo "  ${PYTHON} ${REPO_ROOT}/tools/nuclei_pilot.py --fetch-models --models-dir ${MODELS_DIR}" >&2
+FETCH="${PYTHON} ${REPO_ROOT}/tools/nuclei_pilot.py --detector ${DETECTOR} --fetch-models --models-dir ${MODELS_DIR}"
+if [ "$DETECTOR" = "stardist" ]; then
+    "$PYTHON" -c "import stardist" 2>/dev/null || {
+        echo "ERROR: ${PYTHON} cannot import stardist; set PYTHON=~/.conda/envs/stardist/bin/python" >&2
         exit 1; }
-done
+    for m in 2D_versatile_he 2D_versatile_fluo; do
+        [ -f "${MODELS_DIR}/${m}/weights_best.h5" ] || {
+            echo "ERROR: no ${m} under MODELS_DIR=${MODELS_DIR}; once, on the login node:" >&2
+            echo "  ${FETCH}" >&2
+            exit 1; }
+    done
+else
+    lib=$([ "$DETECTOR" = "cpsam" ] && echo cellpose || echo instanseg)
+    "$PYTHON" -c "import ${lib}" 2>/dev/null || {
+        echo "ERROR: ${PYTHON} cannot import ${lib}; see tools/nuclei_detectors.py for the" >&2
+        echo "  nuclei-torch environment, or set PYTHON=~/.conda/envs/nuclei-torch/bin/python" >&2
+        exit 1; }
+    "$PYTHON" -c "import sys; sys.path.insert(0, '${REPO_ROOT}/tools')
+from nuclei_detectors import weights_present
+sys.exit(0 if weights_present('${MODELS_DIR}', '${DETECTOR}') else 1)" || {
+        echo "ERROR: no ${DETECTOR} weights under MODELS_DIR=${MODELS_DIR}; once, on the login node:" >&2
+        echo "  ${FETCH}" >&2
+        exit 1; }
+    if [ "$DETECTOR" = "cpsam" ] && [ "${ALLOW_CPU:-0}" != "1" ] \
+            && ! "$PYTHON" -c "import torch, sys; sys.exit(0 if torch.cuda.is_available() else 1)"; then
+        echo "ERROR: Cellpose-SAM without a GPU takes ~2 min a tile; submit with --gres=gpu:1" >&2
+        echo "  (ALLOW_CPU=1 runs it anyway)" >&2
+        exit 1
+    fi
+fi
 
 # -----------------------------
 # ref: the H&E reference cache, once per marker
@@ -196,12 +246,12 @@ done
 if [ "$MODE" = "ref" ]; then
     echo "H&E reference for ${MARKER}/${SPLIT}: ${HE} -> ${REF_CACHE}"
     "$PYTHON" "$EVAL_PY" --marker "$MARKER" --he "$HE" --ref-cache "$REF_CACHE" \
-        --models-dir "$MODELS_DIR" --ref-only
+        --detector "$DETECTOR" --models-dir "$MODELS_DIR" --ref-only
     exit 0
 fi
 
-OUT="${EVAL_DIR}/${ARM}/${NAME}"
-echo "${ARM} / ${NAME}"
+OUT="${EVAL_DIR}/${ARM}/${NAME}${NUC_SUB:+/${NUC_SUB}}"
+echo "${ARM} / ${NAME}   (${DETECTOR})"
 echo "  H&E    ${HE}"
 echo "  pred   ${PRED}"
 echo "  output ${OUT}"
@@ -216,7 +266,7 @@ if [ -f "${OUT}/nuclei.csv" ] && [ "${FORCE:-0}" != "1" ]; then
 fi
 
 "$PYTHON" "$EVAL_PY" --marker "$MARKER" --he "$HE" --pred "$PRED" \
-    --ref-cache "$REF_CACHE" --models-dir "$MODELS_DIR" --out "$OUT" \
+    --ref-cache "$REF_CACHE" --detector "$DETECTOR" --models-dir "$MODELS_DIR" --out "$OUT" \
     --figures "$FIGURES" ${SAVE_MASKS:+--save-masks}
 
 echo "Done: ${ARM} / ${NAME}"

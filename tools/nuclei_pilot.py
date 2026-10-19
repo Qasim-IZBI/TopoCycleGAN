@@ -32,12 +32,19 @@ With --fake, the generated IHC for the same H&E tiles is segmented as well and
 matched against the H&E nuclei at IoU 0.5, as a first look at the metric
 itself. That number is a preview from a handful of tiles, not a result.
 
+OTHER DETECTORS. --detector instanseg or cpsam (tools/nuclei_detectors.py)
+runs that model instead, on the RGB tile of both stains -- one model reads
+H&E and IHC alike, so there is no deconvolution variant to choose, only the
+scale. Run from the detector's PyTorch environment, with its own --models-dir.
+
 This is a standalone script, not part of the topo_i2i package: StarDist needs
 TensorFlow, which lives in its own environment, and importing topo_i2i would
 pull in torch. Run it by path:
 
     python tools/nuclei_pilot.py --tiles-root /work2/bz66izin-TopoCG/MIST_tiles \\
         --markers ER --out /work2/bz66izin-TopoCG/nuclei_pilot
+    python tools/nuclei_pilot.py --detector instanseg --models-dir .../nuclei_models \\
+        --tiles-root ... --markers ER --out /work2/bz66izin-TopoCG/nuclei_pilot_instanseg
 
 Output: <out>/<marker>/{<tile>.png, counts.csv, summary.txt}
 """
@@ -184,6 +191,60 @@ class Segmenter:
         return labels
 
 
+DETECTORS = ("stardist", "instanseg", "cpsam")
+
+
+def make_segmenter(detector: str, models_dir: Optional[str] = None):
+    """StarDist's Segmenter, or nuclei_detectors.TorchSegmenter for one of the
+    others -- each with its variants as methods fn(rgb, scale) -> labels."""
+    if detector == "stardist":
+        return Segmenter(models_dir)
+    from nuclei_detectors import TorchSegmenter
+    return TorchSegmenter([detector], models_dir)
+
+
+def variants(detector: str) -> Dict[str, List[str]]:
+    """Which variants to try on the H&E and on the IHC. StarDist's first H&E
+    variant is in domain; fluo_h makes a like-with-like comparison possible.
+    The others read RGB of both stains with the same model."""
+    if detector == "stardist":
+        return {"he": ["he_rgb", "fluo_h"], "ihc": ["he_rgb", "fluo_hdab", "fluo_h"]}
+    return {"he": [detector], "ihc": [detector]}
+
+
+def shown_as(variant: str, rgb: np.ndarray) -> Tuple[np.ndarray, str]:
+    """What a variant's model actually sees, and a row-label note for it."""
+    if variant == "fluo_hdab":
+        return nuclear_od(rgb, dab=True), "\nH+DAB density"
+    if variant == "fluo_h":
+        return nuclear_od(rgb, dab=False), "\nH density"
+    return rgb, ""
+
+
+def iou_match(ref: np.ndarray, pred: np.ndarray, thresh: float = 0.5) -> Tuple[int, int, int, float]:
+    """(tp, fp, fn, mean IoU of the matched pairs) for two label images,
+    pairing objects with IoU of at least `thresh`. From 0.5 up an object has at
+    most one partner (barring exact ties at 0.5), so no assignment is needed --
+    the counts stardist.matching gives, without StarDist, which the PyTorch
+    detectors' environment does not have."""
+    ref = ref.astype(np.int64).ravel()
+    pred = pred.astype(np.int64).ravel()
+    n_ref = len(np.unique(ref[ref > 0]))
+    n_pred = len(np.unique(pred[pred > 0]))
+    both = (ref > 0) & (pred > 0)
+    if not both.any():
+        return 0, n_pred, n_ref, 0.0
+    pairs, inter = np.unique(np.stack([ref[both], pred[both]]), axis=1, return_counts=True)
+    r_ids, r_area = np.unique(ref[ref > 0], return_counts=True)
+    p_ids, p_area = np.unique(pred[pred > 0], return_counts=True)
+    ra = r_area[np.searchsorted(r_ids, pairs[0])]
+    pa = p_area[np.searchsorted(p_ids, pairs[1])]
+    iou = inter / (ra + pa - inter)
+    hit = iou >= thresh
+    tp = int(hit.sum())
+    return tp, n_pred - tp, n_ref - tp, float(iou[hit].mean()) if tp else 0.0
+
+
 def overlay(rgb: np.ndarray, labels: np.ndarray) -> np.ndarray:
     from skimage.segmentation import find_boundaries
     out = rgb.copy()
@@ -229,10 +290,13 @@ def main() -> None:
     p.add_argument("--split", default="valA", help="H&E split; the IHC is its A->B partner")
     p.add_argument("--n", type=int, default=20, help="tiles per marker")
     p.add_argument("--seed", type=int, default=0)
-    # x1 found almost nothing on any dataset in the first pilot -- nuclei are
-    # half their native size in these tiles -- and x2 still missed nuclei in
-    # dense H&E, so the range starts at 1.5 and goes past 2.
-    p.add_argument("--scales", type=float, nargs="+", default=[1.5, 2.0, 2.5, 3.0])
+    p.add_argument("--detector", choices=DETECTORS, default="stardist")
+    # x1 found almost nothing on any dataset in the first StarDist pilot --
+    # nuclei are half their native size in these tiles -- and x2 still missed
+    # nuclei in dense H&E, so its range starts at 1.5 and goes past 2. InstanSeg
+    # and Cellpose-SAM are less tied to one size; their range starts at 1.
+    p.add_argument("--scales", type=float, nargs="+", default=None,
+                   help="default 1.5 2 2.5 3 for StarDist, 1 1.5 2 2.5 otherwise")
     p.add_argument("--fake", action="append", default=[], metavar="MARKER=DIR",
                    help="one model's generated IHC for that marker, segmented too and "
                         "matched against the H&E nuclei (repeatable)")
@@ -242,20 +306,28 @@ def main() -> None:
                         "--fetch-models) instead of ~/.keras, which from_pretrained "
                         "rewrites on every call -- required when jobs run in parallel")
     p.add_argument("--fetch-models", action="store_true",
-                   help="download both models into --models-dir and exit (login node)")
+                   help="download the detector's models into --models-dir and exit "
+                        "(login node)")
     args = p.parse_args()
 
     if args.fetch_models:
         if not args.models_dir:
             p.error("--fetch-models needs --models-dir")
-        fetch_models(args.models_dir)
+        if args.detector == "stardist":
+            fetch_models(args.models_dir)
+        else:
+            from nuclei_detectors import fetch
+            fetch(args.models_dir, args.detector)
         return
     for flag in ("tiles_root", "markers", "out"):
         if not getattr(args, flag):
             p.error("--%s is required" % flag.replace("_", "-"))
 
+    if args.scales is None:
+        args.scales = [1.5, 2.0, 2.5, 3.0] if args.detector == "stardist" else [1.0, 1.5, 2.0, 2.5]
     fakes = dict(f.split("=", 1) for f in args.fake)
-    seg = Segmenter(args.models_dir)
+    seg = make_segmenter(args.detector, args.models_dir)
+    var = variants(args.detector)
     os.makedirs(args.out, exist_ok=True)
 
     rows_out = []
@@ -293,14 +365,15 @@ def main() -> None:
             if fake is not None and fake.shape[:2] != he.shape[:2]:
                 fake = np.asarray(Image.fromarray(fake).resize(he.shape[1::-1], Image.BILINEAR))
 
-            # The H&E side by he_rgb (in domain) and by fluo_h (haematoxylin,
-            # which H&E has too) -- the latter makes the comparison symmetric:
-            # the same segmenter on both sides, so a difference is the image's.
+            # StarDist reads the H&E by he_rgb (in domain) and by fluo_h
+            # (haematoxylin, which H&E has too) -- the latter makes the
+            # comparison symmetric: the same segmenter on both sides, so a
+            # difference is the image's. The other detectors are one model.
             sheet_rows = []
             he_labels = {}
-            for variant, fn, shown, note in (
-                    ("he_rgb", seg.he_rgb, he, ""),
-                    ("fluo_h", seg.fluo_h, nuclear_od(he, dab=False), "\nH density")):
+            for variant in var["he"]:
+                fn = getattr(seg, variant)
+                shown, note = shown_as(variant, he)
                 panels = []
                 for s in args.scales:
                     lab = fn(he, s)
@@ -314,10 +387,9 @@ def main() -> None:
                 if img is None:
                     continue
                 kind = "ihc_real" if "real" in name else "ihc_fake"
-                for variant, fn, shown, note in (
-                        ("he_rgb", seg.he_rgb, img, ""),
-                        ("fluo_hdab", seg.fluo_hdab, nuclear_od(img, dab=True), "\nH+DAB density"),
-                        ("fluo_h", seg.fluo_h, nuclear_od(img, dab=False), "\nH density")):
+                for variant in var["ihc"]:
+                    fn = getattr(seg, variant)
+                    shown, note = shown_as(variant, img)
                     panels = []
                     for s in args.scales:
                         lab = fn(img, s)
@@ -326,12 +398,11 @@ def main() -> None:
                         panels.append(("%s  x%g  n=%d" % (variant, s, n), overlay(img, lab)))
                         if kind == "ihc_fake":
                             # Like with like where the H&E side has the same
-                            # segmenter (fluo_h); otherwise against he_rgb.
-                            ref = "fluo_h" if variant == "fluo_h" else "he_rgb"
-                            from stardist.matching import matching
-                            m = matching(he_labels[(ref, s)], lab, thresh=0.5)
+                            # segmenter; otherwise against its first variant.
+                            ref = variant if variant in var["he"] else var["he"][0]
+                            tp, fp, fn_, _ = iou_match(he_labels[(ref, s)], lab)
                             match_rows.append((marker, "%s vs H&E %s" % (variant, ref),
-                                               s, m.tp, m.fp, m.fn))
+                                               s, tp, fp, fn_))
                     sheet_rows.append((name + note, shown, panels))
 
             sheet(os.path.join(out_dir, stem + ".png"), "%s · %s" % (marker, stem), sheet_rows)
@@ -348,14 +419,14 @@ def main() -> None:
                         "median_area_px"])
             w.writerows(rows)
         text = summarise(marker, args.scales, rows,
-                         [m for m in match_rows if m[0] == marker])
+                         [m for m in match_rows if m[0] == marker], var)
         print("\n" + text)
         with open(os.path.join(out_dir, "summary.txt"), "w") as f:
             f.write(text + "\n")
         print("\nsheets, counts.csv and summary.txt under %s/" % out_dir)
 
 
-def summarise(marker, scales, rows, match_rows) -> str:
+def summarise(marker, scales, rows, match_rows, var) -> str:
     """For each IHC candidate and scale, its per-tile count against the H&E
     count at the same scale. Adjacent sections, so a ratio near 1 is what a
     detector seeing the same nuclei would give."""
@@ -365,17 +436,18 @@ def summarise(marker, scales, rows, match_rows) -> str:
     lines = ["== %s" % marker,
              "  %-22s %6s %10s %14s %20s" % ("image / variant", "scale", "median n",
                                               "median area", "n / n(H&E), median"),
-             "  (n(H&E) by the same segmenter for fluo_h, by he_rgb otherwise)"]
-    for kind, variant in (("he", "he_rgb"), ("he", "fluo_h"),
-                          ("ihc_real", "he_rgb"), ("ihc_real", "fluo_hdab"), ("ihc_real", "fluo_h"),
-                          ("ihc_fake", "he_rgb"), ("ihc_fake", "fluo_hdab"), ("ihc_fake", "fluo_h")):
+             "  (n(H&E) by the same segmenter where it read the H&E too, by %s "
+             "otherwise)" % var["he"][0]]
+    combos = ([("he", v) for v in var["he"]] + [("ihc_real", v) for v in var["ihc"]]
+              + [("ihc_fake", v) for v in var["ihc"]])
+    for kind, variant in combos:
         for s in scales:
             tiles = by.get(s, {})
             vals = [t[(kind, variant)] for t in tiles.values() if (kind, variant) in t]
             if not vals:
                 continue
             # Against the H&E count by the same segmenter where there is one.
-            ref = ("he", "fluo_h") if variant == "fluo_h" else ("he", "he_rgb")
+            ref = ("he", variant if variant in var["he"] else var["he"][0])
             ratios = [t[(kind, variant)][0] / t[ref][0]
                       for t in tiles.values()
                       if (kind, variant) in t and ref in t and t[ref][0] > 0]

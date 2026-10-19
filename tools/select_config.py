@@ -61,10 +61,13 @@ def load_split(eval_dir: str) -> Dict[str, str]:
 class Model:
     """One evaluated model: its per-tile results, reduced per half on demand."""
 
-    def __init__(self, model_dir: str, split: Dict[str, str], radius: str):
+    def __init__(self, model_dir: str, split: Dict[str, str], radius: str,
+                 nuclei_dir: str = ""):
+        """nuclei_dir: the subfolder holding another detector's nuclei results
+        (evaluate_nuclei.sh DETECTOR=...: nuclei_<detector>); "" is StarDist's."""
         self.dir = model_dir
         self.tiles: Dict[str, Tuple[int, int, int]] = {}      # stem -> n_ref, n_pred, tp
-        nt = os.path.join(model_dir, "nuclei_tiles.csv")
+        nt = os.path.join(model_dir, nuclei_dir, "nuclei_tiles.csv")
         if os.path.isfile(nt):
             rows = read_rows(nt)
             col = rows[0].index("tp_r%s" % radius)

@@ -10,11 +10,19 @@ at the settings the pilot (nuclei_pilot.py) chose by eye:
     HER2            2D_versatile_he x2.5   2D_versatile_fluo on H     x2
     BCI (HER2)      2D_versatile_he x3     2D_versatile_fluo on H     x2
 
+OTHER DETECTORS. --detector instanseg or cpsam (tools/nuclei_detectors.py)
+reads both stains as RGB with one open-weights model instead -- InstanSeg's
+brightfield model was trained on IHC too, which StarDist has none for. The
+scales below are starting points; nuclei_pilot.py --detector picks them. Their
+H&E reference is cached apart from StarDist's (the cache is keyed by variant
+and scale), and evaluate_nuclei.sh writes their results to a nuclei_<detector>/
+folder inside each model's directory, so they never overwrite StarDist's.
+
 Matching is by CENTROID DISTANCE first: a generated nucleus whose centroid is
 within r pixels of a real one, one-to-one (Hungarian). The two sides are read
 by different segmenters, which draw boundaries differently, and IoU would
 charge that to the model; a centroid does not depend on where a boundary is
-drawn. IoU-0.5 matching (stardist.matching) is reported alongside.
+drawn. IoU-0.5 matching (the counts stardist.matching gives) is reported alongside.
 
     recall     share of the H&E nuclei found again in the generated IHC --
                "the structure survived"; the headline number
@@ -65,8 +73,8 @@ import numpy as np
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from nuclei_pilot import (INK, INK_2, SURFACE, Segmenter, list_tiles,  # noqa: E402
-                          load_rgb)
+from nuclei_pilot import (DETECTORS, INK, INK_2, SURFACE, iou_match,  # noqa: E402
+                          list_tiles, load_rgb, make_segmenter)
 
 import matplotlib  # noqa: E402
 
@@ -81,6 +89,17 @@ CONFIG = {
     "HER2": ("he_rgb", 2.5, "fluo_h", 2.0),
     "BCI": ("he_rgb", 3.0, "fluo_h", 2.0),
 }
+# The other detectors: one model on the RGB of both stains, every marker alike.
+# Unpiloted defaults -- nuclei_pilot.py --detector chooses the real ones.
+DETECTOR_SCALES = {"instanseg": (1.5, 1.5), "cpsam": (2.0, 2.0)}
+
+
+def settings(detector: str, marker: str) -> Optional[Tuple[str, float, str, float]]:
+    """(H&E variant, H&E scale, IHC variant, IHC scale), or None if unknown."""
+    if detector == "stardist":
+        return CONFIG.get(marker)
+    he_scale, ihc_scale = DETECTOR_SCALES[detector]
+    return detector, he_scale, detector, ihc_scale
 RADII = (3.0, 5.0, 8.0)
 PRIMARY_RADIUS = 5.0
 
@@ -141,7 +160,7 @@ def atomic_savez(path: str, **arrays) -> None:
 FAILED: List[str] = []
 
 
-def guarded(seg: Segmenter, variant: str, img: np.ndarray, scale: float,
+def guarded(seg, variant: str, img: np.ndarray, scale: float,
             inflight_dir: str, stem: str) -> np.ndarray:
     os.makedirs(inflight_dir, exist_ok=True)
     mark = os.path.join(inflight_dir, stem)
@@ -156,7 +175,7 @@ def guarded(seg: Segmenter, variant: str, img: np.ndarray, scale: float,
     return labels
 
 
-def reference(seg: Segmenter, he_path: str, cache_dir: str, variant: str,
+def reference(seg, he_path: str, cache_dir: str, variant: str,
               scale: float) -> np.ndarray:
     stem = os.path.splitext(os.path.basename(he_path))[0]
     path = os.path.join(cache_dir, stem + ".npz")
@@ -171,7 +190,7 @@ def reference(seg: Segmenter, he_path: str, cache_dir: str, variant: str,
     return labels
 
 
-def figure_tiles(he: Dict[str, str], n: int, seed: int, seg: Segmenter,
+def figure_tiles(he: Dict[str, str], n: int, seed: int, seg,
                  cache_dir: str, variant: str, scale: float) -> List[str]:
     """A fixed set of tissue-rich tiles: the same for every model, because it
     depends only on the H&E tiles, the seed and the cached reference."""
@@ -238,14 +257,16 @@ def main() -> None:
     p.add_argument("--out", help="where this model's results go")
     p.add_argument("--ref-cache", required=True,
                    help="H&E reference masks, shared by every model of this marker")
+    p.add_argument("--detector", choices=DETECTORS, default="stardist")
     p.add_argument("--models-dir", default=None,
-                   help="fixed copy of the StarDist models (nuclei_pilot.py --fetch-models)")
+                   help="fixed copy of the detector's models (nuclei_pilot.py --fetch-models)")
     p.add_argument("--ref-only", action="store_true",
                    help="build the H&E reference cache and exit -- run once per "
                         "marker before the model array, so its tasks do not all "
                         "segment the same H&E at once")
     p.add_argument("--he-scale", type=float, default=None)
-    p.add_argument("--ihc-variant", choices=("he_rgb", "fluo_hdab", "fluo_h"), default=None)
+    p.add_argument("--ihc-variant", choices=("he_rgb", "fluo_hdab", "fluo_h") + DETECTORS[1:],
+                   default=None)
     p.add_argument("--ihc-scale", type=float, default=None)
     p.add_argument("--radii", type=float, nargs="+", default=list(RADII))
     p.add_argument("--figures", type=int, default=12,
@@ -256,10 +277,11 @@ def main() -> None:
     p.add_argument("--limit", type=int, default=0, help="first N tiles only (testing)")
     args = p.parse_args()
 
-    if args.marker not in CONFIG and None in (args.he_scale, args.ihc_variant, args.ihc_scale):
+    found = settings(args.detector, args.marker)
+    if found is None and None in (args.he_scale, args.ihc_variant, args.ihc_scale):
         p.error("no settings for marker %r -- give --he-scale, --ihc-variant and "
                 "--ihc-scale" % args.marker)
-    he_variant, he_scale, ihc_variant, ihc_scale = CONFIG.get(args.marker, ("he_rgb", 0, "", 0))
+    he_variant, he_scale, ihc_variant, ihc_scale = found or ("he_rgb", 0, "", 0)
     he_scale = args.he_scale or he_scale
     ihc_variant = args.ihc_variant or ihc_variant
     ihc_scale = args.ihc_scale or ihc_scale
@@ -273,7 +295,7 @@ def main() -> None:
     he = list_tiles(args.he)
     if not he:
         sys.exit("no tiles under %s" % args.he)
-    seg = Segmenter(args.models_dir)
+    seg = make_segmenter(args.detector, args.models_dir)
 
     if args.ref_only:
         stems = sorted(he)[: args.limit or None]
@@ -284,7 +306,7 @@ def main() -> None:
                 print("[ref] %d/%d  %.2fs/tile" % (k, len(stems), (time.time() - t0) / k))
         print("[ref] cache complete: %s  (%d blank tiles given an empty mask%s)"
               % (cache_dir, seg.blank,
-                 ", %d that crashed StarDist: %s" % (len(FAILED), " ".join(FAILED))
+                 ", %d that crashed the detector: %s" % (len(FAILED), " ".join(FAILED))
                  if FAILED else ""))
         return
 
@@ -348,14 +370,13 @@ def main() -> None:
             if r == primary:
                 primary_pairs = pairs
 
-        from stardist.matching import matching
-        m = matching(ref, lab, thresh=0.5)
-        iou[0] += m.tp
-        iou[1] += m.fp
-        iou[2] += m.fn
-        if m.tp:
-            iou_scores += [m.mean_matched_score] * m.tp
-        row.append(m.tp)
+        tp, fp, fn, mean_iou = iou_match(ref, lab)
+        iou[0] += tp
+        iou[1] += fp
+        iou[2] += fn
+        if tp:
+            iou_scores += [mean_iou] * tp
+        row.append(tp)
         tile_rows.append(row)
 
         if args.save_masks:
@@ -383,7 +404,7 @@ def main() -> None:
              ("n_tiles", len(stems)), ("n_ref_nuclei", n_ref), ("n_pred_nuclei", n_pred),
              ("blank_tiles_skipped", seg.blank),
              ("failed_tiles", len(FAILED)),
-             ("radius_px", primary), ("he_segmenter", "%s x%g" % (he_variant, he_scale)),
+             ("radius_px", primary), ("detector", args.detector), ("he_segmenter", "%s x%g" % (he_variant, he_scale)),
              ("ihc_segmenter", "%s x%g" % (ihc_variant, ihc_scale))]
     with open(os.path.join(args.out, "nuclei.csv"), "w", newline="") as f:
         w = csv.writer(f)
@@ -406,7 +427,7 @@ def main() -> None:
     if seg.blank:
         print("  %d blank tile(s) given an empty mask without segmenting" % seg.blank)
     if FAILED:
-        print("  %d tile(s) crashed StarDist in an earlier run and were left empty: %s"
+        print("  %d tile(s) crashed the detector in an earlier run and were left empty: %s"
               % (len(FAILED), " ".join(FAILED)))
 
 

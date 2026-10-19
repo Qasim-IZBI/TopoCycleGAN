@@ -55,33 +55,66 @@
 #
 # It is quick enough to run on the login node too:  bash nuclei_pilot.sh
 #
+# OTHER DETECTORS. DETECTOR=instanseg or cpsam pilots that open-weights model
+# instead (tools/nuclei_detectors.py), on both stains, over SCALES (default
+# 1 1.5 2 2.5), into ${ROOT}/nuclei_pilot_<detector>. Setup once, login node:
+#
+#   conda create -n nuclei-torch python=3.11 -y
+#   P=~/.conda/envs/nuclei-torch/bin/python
+#   $P -m pip install torch instanseg-torch "cellpose>=4" scikit-image matplotlib scipy
+#   for d in instanseg cpsam; do
+#       $P ~/TopoCG_Project/TopoCycleGAN/tools/nuclei_pilot.py --detector $d \
+#           --fetch-models --models-dir /work2/bz66izin-TopoCG/nuclei_models
+#   done
+#
+# (check `$P -c "import torch; print(torch.version.cuda)"` against the nodes'
+# driver; pip's default CUDA build usually fits). Then:
+#
+#   sbatch --export=ALL,DETECTOR=instanseg nuclei_pilot.sh
+#   sbatch --gres=gpu:1 --export=ALL,DETECTOR=cpsam nuclei_pilot.sh      # GPU: SAM backbone
+#
+# and compare each summary.txt's IHC-to-H&E count ratio with StarDist's.
+#
 # Output: ${OUT}/<marker>/{<tile>.png, counts.csv, summary.txt}
 
 set -eo pipefail
+
+DETECTOR=${DETECTOR:-stardist}
+case "$DETECTOR" in
+    stardist)  ENV=${STARDIST_ENV:-stardist};   LIB=stardist ;;
+    instanseg) ENV=${NUCLEI_ENV:-nuclei-torch}; LIB=instanseg ;;
+    cpsam)     ENV=${NUCLEI_ENV:-nuclei-torch}; LIB=cellpose ;;
+    *) echo "ERROR: DETECTOR=${DETECTOR}; one of stardist, instanseg, cpsam" >&2; exit 1 ;;
+esac
 
 if command -v module >/dev/null 2>&1; then
     module purge
     module load Anaconda3/2025.06-1
     eval "$(conda shell.bash hook)"
-    conda activate "${STARDIST_ENV:-stardist}"
+    conda activate "$ENV"
 fi
 
 # The environment's own interpreter, by path. On this cluster an activated env
 # can still leave the Anaconda module's python first on PATH, which has no
 # StarDist; CONDA_PREFIX is set by activate either way. PYTHON overrides.
 PYTHON=${PYTHON:-${CONDA_PREFIX:+${CONDA_PREFIX}/bin/}python}
-if ! "$PYTHON" -c "import stardist" 2>/dev/null; then
-    echo "ERROR: ${PYTHON} cannot import stardist." >&2
-    echo "  Set PYTHON=~/.conda/envs/stardist/bin/python, or see the setup notes above." >&2
+if ! "$PYTHON" -c "import ${LIB}" 2>/dev/null; then
+    echo "ERROR: ${PYTHON} cannot import ${LIB}." >&2
+    echo "  Set PYTHON=~/.conda/envs/${ENV}/bin/python, or see the setup notes above." >&2
     exit 1
 fi
 echo "python: ${PYTHON} ($("$PYTHON" --version 2>&1))"
 
 ROOT=${ROOT:-/work2/bz66izin-TopoCG}
 MARKERS=${MARKERS:-"Ki67 ER HER2 PR"}
-OUT=${OUT:-${ROOT}/nuclei_pilot}
+if [ "$DETECTOR" = "stardist" ]; then
+    OUT=${OUT:-${ROOT}/nuclei_pilot}
+    SCALES=${SCALES:-"1.5 2 2.5 3"}
+else
+    OUT=${OUT:-${ROOT}/nuclei_pilot_${DETECTOR}}
+    SCALES=${SCALES:-"1 1.5 2 2.5"}
+fi
 N=${N:-20}
-SCALES=${SCALES:-"1.5 2 2.5 3"}
 
 # Tile root per marker -- the same lookup the rest of the pipeline uses.
 TILES=${TILES:-${ROOT}/MIST_tiles}
@@ -97,14 +130,24 @@ REPO_ROOT=${REPO_ROOT:-/home/sc.uni-leipzig.de/bz66izin/TopoCG_Project/TopoCycle
 PILOT="${REPO_ROOT}/tools/nuclei_pilot.py"
 [ -f "$PILOT" ] || { echo "ERROR: no tools/nuclei_pilot.py under REPO_ROOT=${REPO_ROOT}" >&2; exit 1; }
 
-MODELS_DIR=${MODELS_DIR:-${ROOT}/stardist_models}
-for m in 2D_versatile_he 2D_versatile_fluo; do
-    if [ ! -f "${MODELS_DIR}/${m}/weights_best.h5" ]; then
-        echo "ERROR: no ${m} under MODELS_DIR=${MODELS_DIR}. Once, on the login node:" >&2
-        echo "  ${PYTHON} ${PILOT} --fetch-models --models-dir ${MODELS_DIR}" >&2
-        exit 1
-    fi
-done
+if [ "$DETECTOR" = "stardist" ]; then
+    MODELS_DIR=${MODELS_DIR:-${ROOT}/stardist_models}
+    for m in 2D_versatile_he 2D_versatile_fluo; do
+        if [ ! -f "${MODELS_DIR}/${m}/weights_best.h5" ]; then
+            echo "ERROR: no ${m} under MODELS_DIR=${MODELS_DIR}. Once, on the login node:" >&2
+            echo "  ${PYTHON} ${PILOT} --fetch-models --models-dir ${MODELS_DIR}" >&2
+            exit 1
+        fi
+    done
+else
+    MODELS_DIR=${MODELS_DIR:-${ROOT}/nuclei_models}
+    "$PYTHON" -c "import sys; sys.path.insert(0, '${REPO_ROOT}/tools')
+from nuclei_detectors import weights_present
+sys.exit(0 if weights_present('${MODELS_DIR}', '${DETECTOR}') else 1)" || {
+        echo "ERROR: no ${DETECTOR} weights under MODELS_DIR=${MODELS_DIR}. Once, on the login node:" >&2
+        echo "  ${PYTHON} ${PILOT} --detector ${DETECTOR} --fetch-models --models-dir ${MODELS_DIR}" >&2
+        exit 1; }
+fi
 
 # One call per tile root: BCI is tiled into its own.
 for M in $MARKERS; do
@@ -113,7 +156,7 @@ for M in $MARKERS; do
         for f in ${FAKE}; do [ "${f%%=*}" = "$M" ] && fake_args+=(--fake "$f"); done ;;
     esac
     "$PYTHON" "$PILOT" --tiles-root "$(tiles_root "$M")" --markers "$M" \
-        --n "$N" --scales $SCALES --out "$OUT" --models-dir "$MODELS_DIR" \
+        --n "$N" --scales $SCALES --out "$OUT" --detector "$DETECTOR" --models-dir "$MODELS_DIR" \
         ${fake_args[@]+"${fake_args[@]}"}
 done
 

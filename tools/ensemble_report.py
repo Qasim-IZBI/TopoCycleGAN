@@ -25,9 +25,14 @@ val_test_split.csv (BCI's held-out testA) is reported whole.
 
     python tools/ensemble_report.py --eval-root /work2/bz66izin-TopoCG/eval
     python tools/ensemble_report.py --eval-root ... --markers BCI --split testA
+    python tools/ensemble_report.py --eval-root ... --detector instanseg
 
-Output under <eval-root>/ensemble_report/<split>_<half>/: members.csv,
-spread.csv, versus.csv. Standard library only.
+--detector reads the nuclei results of another detector (evaluate_nuclei.sh
+DETECTOR=..., in each member's nuclei_<detector>/) instead of StarDist's; SSIM,
+LPIPS, FID and the inversion flag are the same either way.
+
+Output under <eval-root>/ensemble_report/<split>_<half>[_<detector>]/:
+members.csv, spread.csv, versus.csv. Standard library only.
 """
 
 from __future__ import annotations
@@ -116,11 +121,15 @@ def main() -> None:
     p.add_argument("--fail-below", type=float, default=0.4)
     p.add_argument("--boot", type=int, default=2000)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--detector", default="stardist",
+                   help="whose nuclei results: stardist, or instanseg / cpsam")
     args = p.parse_args()
+    nuclei_dir = "" if args.detector == "stardist" else "nuclei_" + args.detector
     if args.half is None:
         args.half = "test" if args.split == "valA" else "all"
 
-    out_dir = os.path.join(args.eval_root, "ensemble_report", "%s_%s" % (args.split, args.half))
+    out_dir = os.path.join(args.eval_root, "ensemble_report", "%s_%s%s" % (
+        args.split, args.half, "_" + args.detector if nuclei_dir else ""))
     os.makedirs(out_dir, exist_ok=True)
     member_rows, spread_rows, versus_rows = [], [], []
 
@@ -144,7 +153,7 @@ def main() -> None:
             mm = MEMBER_RE.match(name)
             if not mm or mm.group("m") != marker:
                 continue
-            mod = Model(os.path.join(ens_dir, name), split, args.radius)
+            mod = Model(os.path.join(ens_dir, name), split, args.radius, nuclei_dir)
             nuc = mod.nuclei(half) or {}
             vals = {"recall": nuc.get("recall"), "precision": nuc.get("precision"),
                     "f1": nuc.get("f1"), "patch_ssim": mod.mean("patch_ssim", half),
@@ -152,8 +161,8 @@ def main() -> None:
                     "inverted": inverted_of(os.path.join(ens_dir, name))}
             members[mm.group("model")].append((int(mm.group("k")), mod, vals))
 
-        print("\n== %s / %s, %s half   (recall at r=%s px; collapsed = recall < %g)"
-              % (marker, args.split, half, args.radius, args.fail_below))
+        print("\n== %s / %s, %s half   (%s nuclei, recall at r=%s px; collapsed = recall < %g)"
+              % (marker, args.split, half, args.detector, args.radius, args.fail_below))
         print("  %-15s %5s  %-15s %6s  %-15s %-15s %-15s %-17s %-15s %-9s %s"
               % ("model", "seeds", "recall", "min", "precision", "F1", "SSIM", "LPIPS", "FID",
                  "collapsed", "inverted"))
