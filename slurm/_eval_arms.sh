@@ -109,7 +109,8 @@ else
             _ens_models=(topo cyclegan dclgan)
             _ens_model=${_ens_models[$(( TASK_ID / 10 ))]}
             NAME="${MARKER}_${_ens_model}_seed$(( TASK_ID % 10 ))"
-            PRED="$(preds_root_of "${ENS_ROOT:-${ROOT}/ensemble}/${MARKER}/${_ens_model}")/seed$(( TASK_ID % 10 ))"
+            # CKPT_STEP=N: the members' step-N predictions (infer_ensemble.sh)
+            PRED="$(preds_root_of "${ENS_ROOT:-${ROOT}/ensemble}/${MARKER}/${_ens_model}")${CKPT_STEP:+_step${CKPT_STEP}}/seed$(( TASK_ID % 10 ))"
             ;;
         identity)
             # The input as its own prediction. Any metric that rewards it is

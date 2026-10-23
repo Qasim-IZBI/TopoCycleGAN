@@ -24,6 +24,8 @@ Every deep-ensemble member, written for ensemble_report.py as
     python tools/invert_check.py --ensemble --root /work2/bz66izin-TopoCG
     python tools/invert_check.py --ensemble --root ... --ens-root .../screen_layout1 \\
         --eval-root .../eval_screen_layout1 --markers Ki67
+    python tools/invert_check.py --ensemble --root ... --ckpt-step 200000 \\
+        --eval-root .../eval_<run>_200k --markers Ki67     # an earlier checkpoint
 
 Standard scientific Python only (numpy, scipy, PIL) -- runs on a login node.
 """
@@ -115,6 +117,8 @@ def main() -> None:
     p.add_argument("--markers", nargs="+", default=["Ki67", "ER", "HER2", "PR", "BCI"])
     p.add_argument("--split", default="valA")
     p.add_argument("--limit", type=int, default=300, help="tiles per model (0 = all)")
+    p.add_argument("--ckpt-step", type=int, default=None,
+                   help="the members' step-N predictions (infer_ensemble.sh CKPT_STEP=N)")
     args = p.parse_args()
 
     if not args.ensemble:
@@ -129,6 +133,8 @@ def main() -> None:
     ens_root = args.ens_root or os.path.join(args.root, "ensemble")
     eval_root = args.eval_root or os.path.join(args.root, "eval")
     preds = "preds" if args.split == "valA" else "preds_" + args.split
+    if args.ckpt_step is not None:
+        preds += "_step%d" % args.ckpt_step
     for marker in args.markers:
         he_dir = os.path.join(args.root, TILE_DIRS.get(marker, "MIST_tiles"),
                               marker, "TrainValAB", args.split)
