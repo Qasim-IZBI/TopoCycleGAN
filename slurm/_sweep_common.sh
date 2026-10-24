@@ -92,6 +92,7 @@ TOPO_EVERY=${TOPO_EVERY:-2}
 PH_CYC_SPLIT=${PH_CYC_SPLIT:-0}     # 1 = compare the IHC cycle term per stain
                                     # channel; ~+50% persistence cost, so a cell
                                     # runs ~53h and needs one requeue
+TOPO_START_SET=${TOPO_START:-}     # explicit: overrides SETTINGS_FROM's too
 TOPO_START=${TOPO_START:-100000}    # let the GAN find its footing first
 TOPO_WARMUP=${TOPO_WARMUP:-50000}   # then ramp the PH weight in over 50k steps,
                                     # keeping the ramp at half the start step as
@@ -110,7 +111,7 @@ echo "MARKER=${MARKER}"
 echo "TASK_ID=${TASK_ID}"
 echo "LAMBDA_CYCLE=${LAMBDA_CYCLE}  FIELD_A=${FIELD_A}  FIELD_B=${FIELD_B} (${FIELD_COMBINE})"
 echo "TOPO_DOWNSAMPLE=${TOPO_DOWNSAMPLE}  TOPO_DIMS=${TOPO_DIMS}  TOPO_PROJECTION=${TOPO_PROJECTION}"
-if [ -n "$STAINS" ] && [ ! -f "$STAINS" ]; then
+if [ -z "${SETTINGS_FROM:-}" ] && [ -n "$STAINS" ] && [ ! -f "$STAINS" ]; then
     echo "ERROR: stain vectors not found at ${STAINS}" >&2
     echo "Run estimate_stains.sh first, or set STAINS= to use the literature table" >&2
     exit 1
@@ -173,6 +174,35 @@ echo "Output directory: ${OUTPUT}"
 # should be distinct, which changes the critical-cell structure the persistence
 # diagrams are built from. Add --amp back only if the PH terms are off.
 # -----------------------------
+# SETTINGS_FROM=<run dir>: train with exactly that run's recorded settings --
+# fields, stain vectors, schedule, steps (tools/run_args.py, as the ensemble
+# does) -- and only this cell's lambda_topo / ph_cyc / ph_trans, the seed and
+# the layout term on top. This is how the rerun repeats the original sweep's
+# per-marker settings (the audit's fields) without retyping them. The knobs
+# above are then not used.
+if [ -n "${SETTINGS_FROM:-}" ]; then
+    REPO_ROOT=${REPO_ROOT:-/home/sc.uni-leipzig.de/bz66izin/TopoCG_Project/TopoCycleGAN}
+    meta="${SETTINGS_FROM%/}/training_meta.json"
+    [ -f "$meta" ] || { echo "ERROR: SETTINGS_FROM has no training_meta.json: ${meta}" >&2; exit 1; }
+    RUN_ARGS=()
+    while IFS= read -r a; do RUN_ARGS+=("$a"); done < <(
+        "${PY3:-python3}" "${REPO_ROOT}/tools/run_args.py" "$meta" \
+            --stains-out "${OUTPUT}/stains.json")
+    (( ${#RUN_ARGS[@]} )) || { echo "ERROR: no settings read from ${meta}" >&2; exit 1; }
+    # After the source run's flags, so these win (argparse keeps the last).
+    RUN_ARGS+=(--lambda-topo "$LAMBDA_TOPO" --lambda-ph-cyc "$PH_CYC" --lambda-ph-trans "$PH_TRANS")
+    [ -n "${TOPO_START_SET:-}" ] && RUN_ARGS+=(--topo-start-step "$TOPO_START" --topo-warmup-steps "$TOPO_WARMUP")
+    [ "$PH_CYC_SPLIT" = "1" ] && RUN_ARGS+=(--ph-cyc-split)
+    [ -n "${SEED:-}" ]          && RUN_ARGS+=(--seed "$SEED")
+    [ -n "$LAMBDA_LAYOUT" ]     && RUN_ARGS+=(--lambda-layout "$LAMBDA_LAYOUT")
+    [ -n "$LAYOUT_STOP" ]       && RUN_ARGS+=(--layout-stop "$LAYOUT_STOP")
+    echo "settings from ${SETTINGS_FROM}"
+    run_cmd topo-train --dataA "${DATA_A}" --dataB "${DATA_B}" --output "${OUTPUT}" \
+        --image-size "${IMAGE_SIZE}" --num-workers "${NUM_WORKERS}" "${RUN_ARGS[@]}"
+    echo "Done: ${RUN_NAME} finished successfully."
+    exit 0
+fi
+
 run_cmd topo-train \
     --dataA "${DATA_A}" \
     --dataB "${DATA_B}" \
