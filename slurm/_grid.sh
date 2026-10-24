@@ -27,7 +27,14 @@
 # field_B stain1+stain2 summed, downsample 2, dims 0 1, projection birth).
 #
 # Format: lambda_topo:ph_cyc:ph_trans
+#
+# GRID=trans picks the paper's rerun grid instead: ph_trans alone at lambda_topo
+# 1e-4 .. 1e-1, one decade apart (tasks 0-3), trained with the layout term so
+# no cell is lost to inversion. Everything that sources this file -- training,
+# inference, evaluation -- must see the same GRID.
 
+case "${GRID:-full}" in
+full)
 CELLS=(
   "0:0:0"
   "0.0002:0:1"
@@ -43,6 +50,20 @@ CELLS=(
   "0.2:1:0"
   "0.2:1:1"
 )
+;;
+trans)
+CELLS=(
+  "0.0001:0:1"
+  "0.001:0:1"
+  "0.01:0:1"
+  "0.1:0:1"
+)
+;;
+*)
+echo "ERROR: GRID=${GRID}; full or trans" >&2
+return 1 2>/dev/null || exit 1
+;;
+esac
 
 # A submitter's --export=ALL,LAMBDA_TOPO=... overrides the cell. Remember that
 # override once, here, rather than reading it back off LAMBDA_TOPO inside

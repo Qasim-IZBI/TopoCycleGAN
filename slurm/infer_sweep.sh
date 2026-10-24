@@ -74,6 +74,9 @@ if command -v module >/dev/null 2>&1; then
 fi
 
 MARKER_LC=$(echo "$MARKER" | tr 'A-Z' 'a-z')
+if [ -n "${SWEEP_ROOT:-}" ]; then      # as _sweep_common.sh
+    BASE=${BASE:-${SWEEP_ROOT}/${MARKER_LC}}
+fi
 BASE=${BASE:-/work2/bz66izin-TopoCG/Outputs_${MARKER_LC}}
 
 # Tile root per marker: TILES_<MARKER> wins if it is set, else TILES. Kept in

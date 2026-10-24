@@ -7,6 +7,8 @@
 #
 #   ARM=main                  0-12 the TopoCycleGAN sweep in Outputs_<marker>,
 #                             13 cyclegan small, 14 dclgan small
+#   ARM=sweep                 the cells of the sweep under SWEEP_ROOT/<marker>,
+#                             for the GRID it was trained with (GRID=trans: 0-3)
 #   ARM=cycsplit              the ph_cyc=1 cells of Outputs_<marker>_cycsplit
 #   ARM=worstfield_cycmerged  cells 1-12 of Outputs_<marker>_worstfield_cycmerged
 #   ARM=worstfield_cycsplit   the ph_cyc=1 cells of ..._worstfield_cycsplit
@@ -66,6 +68,10 @@ else
     }
 
     case "$ARM" in
+        sweep)
+            # A sweep trained with SWEEP_ROOT (and GRID), e.g. the rerun.
+            grid_cell "${SWEEP_ROOT:?ARM=sweep needs SWEEP_ROOT}/${MARKER_LC}"
+            ;;
         main)
             if (( TASK_ID < n_cells )); then
                 grid_cell "${ROOT}/Outputs_${MARKER_LC}"

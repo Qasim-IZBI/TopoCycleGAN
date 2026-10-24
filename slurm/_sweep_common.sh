@@ -96,6 +96,15 @@ TOPO_START=${TOPO_START:-100000}    # let the GAN find its footing first
 TOPO_WARMUP=${TOPO_WARMUP:-50000}   # then ramp the PH weight in over 50k steps,
                                     # keeping the ramp at half the start step as
                                     # before (was 5k after 10k)
+# The layout-consistency term against tissue / lumen inversion
+# (topo_i2i/layout.py), trained on for the first LAYOUT_STOP steps only.
+# Off unless set; the paper's rerun uses LAMBDA_LAYOUT=1, LAYOUT_STOP=20000.
+LAMBDA_LAYOUT=${LAMBDA_LAYOUT:-}
+LAYOUT_STOP=${LAYOUT_STOP:-}
+if [ -n "$LAYOUT_STOP" ] && [ -z "$LAMBDA_LAYOUT" ]; then
+    echo "ERROR: LAYOUT_STOP=${LAYOUT_STOP} without LAMBDA_LAYOUT" >&2
+    exit 1
+fi
 
 echo "MARKER=${MARKER}"
 echo "TASK_ID=${TASK_ID}"
@@ -107,6 +116,7 @@ if [ -n "$STAINS" ] && [ ! -f "$STAINS" ]; then
     exit 1
 fi
 echo "LAMBDA_PH_CYC=${PH_CYC}  LAMBDA_PH_TRANS=${PH_TRANS}  LAMBDA_TOPO=${LAMBDA_TOPO}"
+echo "GRID=${GRID:-full}  LAMBDA_LAYOUT=${LAMBDA_LAYOUT:-off}  LAYOUT_STOP=${LAYOUT_STOP:-none}"
 # The audit's verdict does not gate the grid: a cell it predicts will not help
 # is how that prediction gets tested. Say so in the log rather than silently
 # zeroing the term.
@@ -127,6 +137,7 @@ fi
 # per-marker -- the same split audit_fields, inspect and estimate_stains make.
 TILES=${TILES:-/work2/bz66izin-TopoCG/MIST_tiles}
 TILES_BCI=${TILES_BCI:-/work2/bz66izin-TopoCG/BCI_tiles}
+TILES_VS=${TILES_VS:-/work2/bz66izin-TopoCG/VS_tiles}
 # Tile root per marker: TILES_<MARKER> wins if it is set, else TILES. That is
 # how a dataset tiled somewhere else (BCI, VS) joins in without editing this.
 tiles_root() {
@@ -142,6 +153,11 @@ DATA_B=${DATA_B:-${DATA_DIR}/trainB/}
 
 # tr rather than ${MARKER,,} so this stays portable to bash 3.x
 MARKER_LC=$(echo "$MARKER" | tr 'A-Z' 'a-z')
+# SWEEP_ROOT=<dir> puts a whole sweep under <dir>/<marker>/ instead of
+# Outputs_<marker>, so a rerun never writes into the original sweep.
+if [ -n "${SWEEP_ROOT:-}" ]; then
+    BASE=${BASE:-${SWEEP_ROOT}/${MARKER_LC}}
+fi
 BASE=${BASE:-/work2/bz66izin-TopoCG/Outputs_${MARKER_LC}}
 OUTPUT="${BASE}/results/${RUN_NAME}"
 
@@ -181,6 +197,8 @@ run_cmd topo-train \
     --topo-start-step "${TOPO_START}" \
     --topo-warmup-steps "${TOPO_WARMUP}" \
     ${SEED:+--seed "$SEED"} \
+    ${LAMBDA_LAYOUT:+--lambda-layout "$LAMBDA_LAYOUT"} \
+    ${LAYOUT_STOP:+--layout-stop "$LAYOUT_STOP"} \
     ${PH_CYC_SPLIT:+$( [ "$PH_CYC_SPLIT" = "1" ] && echo --ph-cyc-split )}
 
 echo "Done: ${RUN_NAME} finished successfully."
