@@ -37,6 +37,24 @@
 # generator architecture and differ in their losses, which is what makes the
 # comparison between them a comparison of method.
 #
+# MODEL=cyclediffusion is the zoo's diffusion baseline: two unconditional DDPM
+# UNets, one per domain, trained only on their own domain's denoising loss --
+# no discriminator, no cycle loss. A->B translation DDIM-inverts the H&E with
+# the A model and decodes the noise with the B model, so the A->B path is both
+# UNets, and the rungs match the GANs' on that count (cd_base_channels):
+#
+#   small   40   11.43M A->B     medium  84   50.29M     large  120  102.57M
+#
+# It cannot take the layout term: training never produces an A->B image (that
+# needs the full ~400-pass translation), so LAMBDA_LAYOUT is refused for it.
+# BATCH_SIZE other than 1 trains into <run>_b<N>; keep the training images
+# equal when comparing batch sizes (batch 8 at STEPS=50000 sees what batch 1
+# sees at 400000):
+#
+#   MODEL=cyclediffusion MARKER=Ki67 SEED=0 sbatch --export=ALL train_baseline.sh
+#   MODEL=cyclediffusion MARKER=Ki67 SEED=0 BATCH_SIZE=8 STEPS=50000 SAVE_STEPS=12500 \
+#       sbatch --export=ALL train_baseline.sh
+#
 # TopoCycleGAN, at the settings every sweep in this repo trains, is ngf=64 --
 # 11.38M A->B, 28.29M total. So `small` is the size-matched baseline and the
 # other two rungs are deliberately LARGER than the method they are compared
@@ -70,21 +88,31 @@
 
 set -eo pipefail
 
-MODEL=${MODEL:?set MODEL=cyclegan or MODEL=dclgan}
+MODEL=${MODEL:?set MODEL=cyclegan, dclgan or cyclediffusion}
 MARKER=${MARKER:?set MARKER, e.g. MARKER=ER}
 SIZE=${SIZE:-small}
 
 case "$MODEL" in
-    cyclegan|dclgan) ;;
-    *) echo "ERROR: MODEL must be cyclegan or dclgan (got '${MODEL}')" >&2; exit 1 ;;
+    cyclegan|dclgan|cyclediffusion) ;;
+    *) echo "ERROR: MODEL must be cyclegan, dclgan or cyclediffusion (got '${MODEL}')" >&2; exit 1 ;;
 esac
-case "$SIZE" in
-    small)  def_ngf=64  ;;
-    medium) def_ngf=136 ;;
-    large)  def_ngf=192 ;;
+# Width per rung: ngf for the GANs, cd_base_channels for CycleDiffusion --
+# each chosen to give the same A->B parameter count (see above).
+case "$MODEL:$SIZE" in
+    cyclediffusion:small)  def_ngf=40  ;;
+    cyclediffusion:medium) def_ngf=84  ;;
+    cyclediffusion:large)  def_ngf=120 ;;
+    *:small)  def_ngf=64  ;;
+    *:medium) def_ngf=136 ;;
+    *:large)  def_ngf=192 ;;
     *) echo "ERROR: SIZE must be small, medium or large (got '${SIZE}')" >&2; exit 1 ;;
 esac
 NGF=${NGF:-$def_ngf}
+if [ "$MODEL" = "cyclediffusion" ] && [ -n "${LAMBDA_LAYOUT:-}${LAYOUT_STOP:-}" ]; then
+    echo "ERROR: cyclediffusion cannot take the layout term -- its training makes" >&2
+    echo "  no A->B image to compare with the H&E. Unset LAMBDA_LAYOUT / LAYOUT_STOP." >&2
+    exit 1
+fi
 BLOCKS=${BLOCKS:-9}
 
 if command -v module >/dev/null 2>&1; then
@@ -134,7 +162,9 @@ PROJ_DIM=${PROJ_DIM:-256}
 
 MARKER_LC=$(echo "$MARKER" | tr 'A-Z' 'a-z')
 BASE=${BASE:-/work2/bz66izin-TopoCG/Outputs_${MARKER_LC}_${MODEL}_${SIZE}}
-RUN_NAME=${RUN_NAME:-${MARKER}_${MODEL}_${SIZE}}
+# A batch other than 1 is a different run, not a continuation of this one.
+BATCH_TAG=""; [ "$BATCH_SIZE" != "1" ] && BATCH_TAG="_b${BATCH_SIZE}"
+RUN_NAME=${RUN_NAME:-${MARKER}_${MODEL}_${SIZE}${BATCH_TAG}}
 OUTPUT="${BASE}/results/${RUN_NAME}"
 
 if [ ! -d "$DATA_A" ] || [ ! -d "$DATA_B" ]; then
@@ -164,21 +194,30 @@ mkdir -p "$OUTPUT"
 # reason a job did or did not reach STEPS.
 # LC_ALL=C: awk honours the locale's decimal separator, and a comma here
 # would read as a thousands mark in the log.
-cost=$(LC_ALL=C awk -v n="$NGF" 'BEGIN { printf "%.1f", (n/64.0)*(n/64.0) }')
+ref=64; [ "$MODEL" = "cyclediffusion" ] && ref=40
+cost=$(LC_ALL=C awk -v n="$NGF" -v r="$ref" 'BEGIN { printf "%.1f", (n/r)*(n/r) }')
 
 echo
 echo "================ ${MODEL} / ${SIZE} baseline: ${MARKER} ================"
-echo "  width     ngf=${NGF}  n_blocks=${BLOCKS}"
-echo "  rel cost  ~${cost}x per step vs ngf=64 (width squared)"
+if [ "$MODEL" = "cyclediffusion" ]; then
+    echo "  width     cd_base_channels=${NGF}  (two UNets, channel_mult 1,2,2,4)"
+else
+    echo "  width     ngf=${NGF}  n_blocks=${BLOCKS}"
+fi
+echo "  rel cost  ~${cost}x per step vs the small rung (width squared)"
 echo "  dataA     ${DATA_A}"
 echo "  dataB     ${DATA_B}"
 echo "  output    ${OUTPUT}"
-echo "  steps     ${STEPS}  batch ${BATCH_SIZE}  workers ${NUM_WORKERS}"
+echo "  steps     ${STEPS}  batch ${BATCH_SIZE}  workers ${NUM_WORKERS}  ($(( STEPS * BATCH_SIZE )) training images)"
 echo
 
 size_args=()
 if [ "$MODEL" = "cyclegan" ]; then
     size_args=(--cyclegan_ngf "$NGF" --cyclegan_n_blocks "$BLOCKS")
+elif [ "$MODEL" = "cyclediffusion" ]; then
+    # The zoo's defaults for everything but the width: channel_mult 1,2,2,4,
+    # 2 res blocks, T=1000. The sampling steps are an inference setting.
+    size_args=(--cd_base_channels "$NGF")
 else
     size_args=(--dclgan_ngf "$NGF" --dclgan_n_blocks "$BLOCKS"
                --lambda_dcl "$LAMBDA_DCL"

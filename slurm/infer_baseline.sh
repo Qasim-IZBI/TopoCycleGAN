@@ -17,6 +17,7 @@
 #
 #   task  0 cyclegan small    1 cyclegan medium    2 cyclegan large
 #   task  3 dclgan   small    4 dclgan   medium    5 dclgan   large
+#   task  6 cyclediffusion small   7 medium   8 large   (not in the default array)
 #
 # Inference goes through the zoo's i2i-inference, not topo-infer: these are
 # the zoo's own CycleGAN/DCLGAN, and topo-infer only rebuilds TopoCycleGAN. The
@@ -37,6 +38,17 @@
 # A (model, size) that was never trained exits clean, so the full array is
 # safe to submit whatever subset exists.
 #
+# CYCLEDIFFUSION translates by DDIM inversion plus decoding: CD_STEPS of each
+# (default 200, the zoo's), so ~2 x CD_STEPS UNet passes per tile where a GAN
+# needs one -- give it time. A CD_STEPS other than 200 writes to
+# <run>_cd<N>, so step counts can be compared side by side. BATCH_SIZE=8 finds
+# the run train_baseline.sh trained at that batch (<run>_b8). The log ends with
+# the seconds per tile.
+#
+#   sbatch --array=6 --time=24:00:00 --export=ALL,MARKER=Ki67 infer_baseline.sh
+#   sbatch --array=6 --time=12:00:00 --export=ALL,MARKER=Ki67,CD_STEPS=50 infer_baseline.sh
+#   sbatch --array=6 --time=24:00:00 --export=ALL,MARKER=Ki67,BATCH_SIZE=8 infer_baseline.sh
+#
 # Output: ${BASE}/preds/${RUN_NAME}, or preds_${SPLIT}/ for a split other than
 # valA -- the same layout infer_sweep.sh writes, under the root train_baseline.sh
 # trained into (Outputs_<marker>_<model>_<size>).
@@ -49,6 +61,7 @@ TASK_ID=${SLURM_ARRAY_TASK_ID:?submit with sbatch -- there is no array index}
 ARMS=(
   "cyclegan:small" "cyclegan:medium" "cyclegan:large"
   "dclgan:small"   "dclgan:medium"   "dclgan:large"
+  "cyclediffusion:small" "cyclediffusion:medium" "cyclediffusion:large"
 )
 if (( TASK_ID < 0 || TASK_ID >= ${#ARMS[@]} )); then
     echo "ERROR: task ${TASK_ID} is outside 0-$(( ${#ARMS[@]} - 1 ))" >&2
@@ -67,8 +80,13 @@ fi
 # Kept in step with train_baseline.sh's BASE and RUN_NAME.
 MARKER_LC=$(echo "$MARKER" | tr 'A-Z' 'a-z')
 BASE=${BASE:-/work2/bz66izin-TopoCG/Outputs_${MARKER_LC}_${MODEL}_${SIZE}}
-RUN_NAME=${RUN_NAME:-${MARKER}_${MODEL}_${SIZE}}
+BATCH_SIZE=${BATCH_SIZE:-1}
+BATCH_TAG=""; [ "$BATCH_SIZE" != "1" ] && BATCH_TAG="_b${BATCH_SIZE}"
+RUN_NAME=${RUN_NAME:-${MARKER}_${MODEL}_${SIZE}${BATCH_TAG}}
 RUN_DIR="${BASE}/results/${RUN_NAME}"
+# CycleDiffusion's sampling steps; a non-default count gets its own outputs.
+CD_STEPS=${CD_STEPS:-200}
+CD_TAG=""; [ "$MODEL" = "cyclediffusion" ] && [ "$CD_STEPS" != "200" ] && CD_TAG="_cd${CD_STEPS}"
 
 # Tile root per marker: the same lookup as training and infer_sweep.sh.
 TILES=${TILES:-/work2/bz66izin-TopoCG/MIST_tiles}
@@ -98,9 +116,9 @@ if [ -n "${SUBDIR:-}" ]; then
 fi
 
 if [ "$SPLIT" = "valA" ]; then
-    OUT_DIR=${OUT_DIR:-${BASE}/preds/${RUN_NAME}}
+    OUT_DIR=${OUT_DIR:-${BASE}/preds/${RUN_NAME}${CD_TAG}}
 else
-    OUT_DIR=${OUT_DIR:-${BASE}/preds_${SPLIT}/${RUN_NAME}}
+    OUT_DIR=${OUT_DIR:-${BASE}/preds_${SPLIT}/${RUN_NAME}${CD_TAG}}
 fi
 
 echo "task ${TASK_ID}: ${MODEL} / ${SIZE}  (${RUN_NAME})"
@@ -142,7 +160,14 @@ if [ -z "$CKPT" ]; then
 fi
 echo "  ckpt   ${CKPT}"
 
+cd_args=()
+[ "$MODEL" = "cyclediffusion" ] && cd_args=(--cd_steps "$CD_STEPS")
+t0=$(date +%s)
 i2i-inference --model "$MODEL" --ckpt "$CKPT" --data "$VAL_A" \
-              --outdir "$OUT_DIR" --direction "$DIRECTION" --resume
+              --outdir "$OUT_DIR" --direction "$DIRECTION" --resume \
+              ${cd_args[@]+"${cd_args[@]}"}
+n=$(find "$OUT_DIR" -name '*.tif' | wc -l | tr -d ' ')
+dt=$(( $(date +%s) - t0 ))
+echo "  ${n} tiles in ${OUT_DIR}; this job ${dt}s$( (( n > 0 )) && LC_ALL=C awk -v d="$dt" -v n="$n" 'BEGIN { printf ", <= %.2f s per tile", d / n }')"
 
 echo "Done: ${RUN_NAME}"
