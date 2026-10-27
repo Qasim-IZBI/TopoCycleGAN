@@ -80,3 +80,37 @@ def test_model_reads_another_detectors_folder(tmp_path):
     assert Model(str(tmp_path), split, "5").nuclei("test")["recall"] == pytest.approx(0.4)
     assert Model(str(tmp_path), split, "5", "nuclei_instanseg").nuclei("test")["recall"] \
         == pytest.approx(0.8)
+
+
+def _fake_eval(root, arm, names, recall_of, detector_dir=""):
+    """An eval root with a 2-tile split (one sel, one test tile) per marker and
+    one model per name, whose sel-half recall is recall_of(marker, name)."""
+    for m in ("Ki67", "ER", "HER2", "PR"):
+        d = root / m / "valA"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "val_test_split.csv").write_text("tile,slide,half\ns1_t0,s1,sel\ns2_t0,s2,test\n")
+        for name in names:
+            md = d / arm / (name % m) / detector_dir
+            md.mkdir(parents=True)
+            tp = int(round(100 * recall_of(m, name)))
+            (md / "nuclei_tiles.csv").write_text(
+                "tile,n_ref,n_pred,tp_r5\ns1_t0,100,100,%d\ns2_t0,100,100,50\n" % tp)
+
+
+def test_select_config_ranks_the_rerun_on_its_detector(tmp_path):
+    import subprocess
+    cells = ["%s_lt0.0001_cyc0_trans1", "%s_lt0.001_cyc0_trans1",
+             "%s_lt0.01_cyc0_trans1", "%s_lt0.1_cyc0_trans1"]
+    best = {"%s_lt0.01_cyc0_trans1": 0.9}
+    _fake_eval(tmp_path, "sweep", cells, lambda m, n: best.get(n, 0.7), "nuclei_cpsam")
+    tool = os.path.join(os.path.dirname(__file__), "..", "tools", "select_config.py")
+    out = subprocess.run([sys.executable, tool, "--eval-root", str(tmp_path), "--arms", "sweep",
+                          "--detector", "cpsam", "--report-markers", "Ki67"],
+                         capture_output=True, text=True, check=True).stdout
+    assert "rerun   lt=0.01  cyc0 trans1" in out and "<- chosen" in out
+    assert "(arm=sweep, task 2)" in out
+    assert "CycleGAN small" not in out                  # no un-layouted baselines
+    import json
+    chosen = json.load(open(tmp_path / "selection_sweep_cpsam" / "selection.json"))["chosen"]
+    assert chosen["lambda_topo"] == "0.01" and abs(chosen["mean_recall"] - 0.9) < 1e-9
+    assert not (tmp_path / "selection").exists()       # the original selection untouched

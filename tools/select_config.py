@@ -24,7 +24,16 @@ the same H&E nuclei.
 
     python tools/select_config.py --eval-root /work2/bz66izin-TopoCG/eval
 
-Output under <eval-root>/selection/: selection.json, sel_ranking.csv,
+THE RERUN (GRID=trans, under SWEEP_ROOT, evaluated as ARM=sweep): rank its
+four ph_trans-only cells instead, on another detector's nuclei if wanted:
+
+    python tools/select_config.py --eval-root .../eval --arms sweep --detector cpsam
+
+Its test half shows the chosen cell alone: the only baselines under this eval
+root were trained without the layout term (two of them inverted), so the
+comparison belongs to the layout ensembles' ensemble_report.py instead.
+
+Output under <eval-root>/selection[_<arms>][_<detector>]/: selection.json, sel_ranking.csv,
 test_report.csv, all_models_by_half.csv (every model, both halves -- for the
 supplementary tables). Standard library only.
 """
@@ -43,7 +52,7 @@ from typing import Dict, List, Optional, Tuple
 
 CELL_RE = re.compile(r"^(?P<m>[^_]+)_lt(?P<lt>[0-9.eE+-]+)_cyc(?P<c>\d)_trans(?P<t>\d)$")
 ARMS = ("main", "cycsplit", "worstfield_cycmerged", "worstfield_cycsplit", "baselines",
-        "identity", "custom")
+        "identity", "custom", "sweep")
 
 
 def read_rows(path: str) -> List[List[str]]:
@@ -140,7 +149,8 @@ def bootstrap_diff(a: Dict[str, Tuple[int, int]], b: Dict[str, Tuple[int, int]],
 
 
 def label(arm: str, lt: str, c: str, t: str) -> str:
-    return "%s  lt=%s  cyc%s trans%s" % ("merged" if arm == "main" else "split ", lt, c, t)
+    kind = {"main": "merged", "cycsplit": "split ", "sweep": "rerun "}.get(arm, arm)
+    return "%s  lt=%s  cyc%s trans%s" % (kind, lt, c, t)
 
 
 def main() -> None:
@@ -155,7 +165,17 @@ def main() -> None:
                    help="a run below this recall is counted as failed (collapsed)")
     p.add_argument("--boot", type=int, default=2000)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--arms", nargs="+", default=["main", "cycsplit"],
+                   help="where the candidate configurations are: main / cycsplit (the "
+                        "original sweep) or sweep (the rerun, ARM=sweep)")
+    p.add_argument("--detector", default="stardist",
+                   help="whose nuclei results: stardist, or the detector of "
+                        "evaluate_nuclei.sh DETECTOR=... (its nuclei_<detector>/)")
+    p.add_argument("--sweep-root", default="/work2/bz66izin-TopoCG/sweep_layout",
+                   help="the rerun's SWEEP_ROOT, for the FID commands printed")
     args = p.parse_args()
+    nuclei_dir = "" if args.detector == "stardist" else "nuclei_" + args.detector
+    rerun = "sweep" in args.arms
 
     markers = list(dict.fromkeys(args.select_markers + args.report_markers))
     models: Dict[Tuple[str, str, str], Model] = {}            # (marker, arm, name)
@@ -171,9 +191,12 @@ def main() -> None:
                 continue
             for name in sorted(os.listdir(arm_dir)):
                 if os.path.isdir(os.path.join(arm_dir, name)):
-                    models[(m, arm, name)] = Model(os.path.join(arm_dir, name), split, args.radius)
+                    models[(m, arm, name)] = Model(os.path.join(arm_dir, name), split,
+                                                   args.radius, nuclei_dir)
 
-    out_dir = os.path.join(args.eval_root, "selection")
+    tag = "" if args.arms == ["main", "cycsplit"] else "_" + "_".join(args.arms)
+    tag += "" if args.detector == "stardist" else "_" + args.detector
+    out_dir = os.path.join(args.eval_root, "selection" + tag)
     os.makedirs(out_dir, exist_ok=True)
 
     # ------------------------------------------------ every model, both halves
@@ -193,7 +216,7 @@ def main() -> None:
     # ------------------------------------------------ selection, sel half only
     configs: Dict[Tuple[str, str, str, str], Dict[str, Dict[str, float]]] = defaultdict(dict)
     for (m, arm, name), mod in models.items():
-        if m not in args.select_markers or arm not in ("main", "cycsplit"):
+        if m not in args.select_markers or arm not in args.arms:
             continue
         cm = CELL_RE.match(name)
         if not cm or cm.group("t") != "1":
@@ -220,8 +243,8 @@ def main() -> None:
     ranking.sort(key=lambda r: (-r["mean_recall"], -r["mean_f1"]))
     best = ranking[0]
 
-    print("\nSELECTION -- sel half, %s, recall at r=%s px; failed = recall < %g"
-          % (" ".join(args.select_markers), args.radius, args.fail_below))
+    print("\nSELECTION -- sel half, %s, %s nuclei, recall at r=%s px; failed = recall < %g"
+          % (" ".join(args.select_markers), args.detector, args.radius, args.fail_below))
     head = "  %-34s" % "configuration" + "".join("%8s" % m for m in args.select_markers) \
         + "%10s%9s%8s" % ("mean rec", "mean F1", "failed")
     print(head)
@@ -250,6 +273,10 @@ def main() -> None:
 
     contenders = (("best", "TopoCycleGAN (chosen)"), ("cyclegan", "CycleGAN small"),
                   ("dclgan", "DCLGAN small"), ("identity", "identity (H&E unchanged)"))
+    if rerun:
+        # The baselines here were trained without the layout term; compare
+        # against the layout ensembles' members instead (ensemble_report.py).
+        contenders = (contenders[0], contenders[3])
     print("\nTEST -- test half; FID only once `split_eval.sh fid` has run for it")
     rows = []
     for m in args.report_markers:
@@ -269,7 +296,7 @@ def main() -> None:
                          *(fmt(n.get(k), 4) for k in ("recall", "precision", "f1")),
                          fmt(ssim, 4), fmt(lp, 5), fmt(fid, 3)])
         best_mod = models.get((m,) + name_of(m, "best"))
-        for which, nice in contenders[1:3]:
+        for which, nice in [c for c in contenders if c[0] in ("cyclegan", "dclgan")]:
             base = models.get((m,) + name_of(m, which))
             if best_mod and base:
                 d, lo, hi = bootstrap_diff(best_mod.slide_sums("test"), base.slide_sums("test"),
@@ -292,12 +319,16 @@ def main() -> None:
                                                    "mean_recall", "mean_f1", "failed")},
                    "ranking": ranking}, f, indent=2)
 
-    task = grid_task(best["lambda_topo"], best["ph_cyc"], best["ph_trans"])
+    task = grid_task(best["lambda_topo"], best["ph_cyc"], best["ph_trans"], best["arm"])
     print("\nchosen: %s  (arm=%s, task %s)" % (best["label"], best["arm"], task))
     if any(models.get((m,) + name_of(m, "best")) and
            models[(m,) + name_of(m, "best")].fid("test") is None for m in args.report_markers):
         print("\nFID on the test half is still missing -- from slurm/:")
         for m in args.report_markers:
+            if rerun:
+                print("  sbatch --array=%s --export=ALL,MARKER=%s,ARM=sweep,GRID=trans,SWEEP_ROOT=%s,"
+                      "HALF=test split_eval.sh fid" % (task, m, args.sweep_root))
+                continue
             print("  sbatch --array=%s --export=ALL,MARKER=%s,ARM=%s,HALF=test split_eval.sh fid"
                   % (task, m, best["arm"]))
             print("  sbatch --array=13,14 --export=ALL,MARKER=%s,ARM=main,HALF=test split_eval.sh fid" % m)
@@ -306,13 +337,17 @@ def main() -> None:
 
 
 # _grid.sh's cell order: 0 is the baseline, then per lambda_topo (ascending)
-# the three PH settings cyc0/trans1, cyc1/trans0, cyc1/trans1.
+# the three PH settings cyc0/trans1, cyc1/trans0, cyc1/trans1. GRID=trans (the
+# rerun, ARM=sweep) is ph_trans alone at 1e-4 .. 1e-1, tasks 0-3.
 GRID_LAMBDAS = ("0.0002", "0.002", "0.02", "0.2")
 GRID_PH = (("0", "1"), ("1", "0"), ("1", "1"))
+TRANS_LAMBDAS = ("0.0001", "0.001", "0.01", "0.1")
 
 
-def grid_task(lt: str, c: str, t: str) -> str:
+def grid_task(lt: str, c: str, t: str, arm: str = "main") -> str:
     try:
+        if arm == "sweep":
+            return str(TRANS_LAMBDAS.index(lt)) if (c, t) == ("0", "1") else "?"
         return str(1 + 3 * GRID_LAMBDAS.index(lt) + GRID_PH.index((c, t)))
     except ValueError:
         return "?"
