@@ -157,21 +157,56 @@ def atomic_savez(path: str, **arrays) -> None:
 # same tile again. So each tile is marked in flight before it is segmented and
 # unmarked after: a mark found at start-up is a tile that killed a run, and it
 # gets an empty mask instead of a second attempt.
+#
+# The H&E reference is shared: array tasks started together build it at once
+# and meet each other's marks. A FRESH mark there is another job segmenting
+# that tile now, not a crash -- wait for its result (`done`) rather than cache
+# an empty reference. Only a mark left STALE_S without a result is a crash.
 FAILED: List[str] = []
+STALE_S = 600
+
+
+def _remove(path: str) -> None:
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass                          # another job got there first
+
+
+def _mark_age(mark: str) -> Optional[float]:
+    try:
+        return time.time() - os.path.getmtime(mark)
+    except FileNotFoundError:
+        return None
 
 
 def guarded(seg, variant: str, img: np.ndarray, scale: float,
-            inflight_dir: str, stem: str) -> np.ndarray:
+            inflight_dir: str, stem: str, done: Optional[str] = None) -> np.ndarray:
     os.makedirs(inflight_dir, exist_ok=True)
     mark = os.path.join(inflight_dir, stem)
-    if os.path.exists(mark):
+    age = _mark_age(mark)
+    if done is not None:
+        while age is not None and age < STALE_S:
+            if os.path.isfile(done):
+                try:
+                    return np.load(done)["labels"]
+                except Exception:
+                    pass              # being renamed into place; look again
+            time.sleep(2)
+            age = _mark_age(mark)
+        if age is None and os.path.isfile(done):
+            try:
+                return np.load(done)["labels"]
+            except Exception:
+                pass
+    if age is not None:
         print("  [failed] %s killed a previous run; empty mask, not retried" % stem)
         FAILED.append(stem)
-        os.remove(mark)
+        _remove(mark)
         return np.zeros(img.shape[:2], dtype=np.int32)
     open(mark, "w").close()
     labels = getattr(seg, variant)(img, scale).astype(np.int32)
-    os.remove(mark)
+    _remove(mark)
     return labels
 
 
@@ -185,7 +220,7 @@ def reference(seg, he_path: str, cache_dir: str, variant: str,
         except Exception:
             pass                      # unreadable: recompute and overwrite
     labels = guarded(seg, variant, load_rgb(he_path), scale,
-                     os.path.join(cache_dir, ".inflight"), stem)
+                     os.path.join(cache_dir, ".inflight"), stem, done=path)
     atomic_savez(path, labels=labels)
     return labels
 
