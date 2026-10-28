@@ -114,3 +114,20 @@ def test_select_config_ranks_the_rerun_on_its_detector(tmp_path):
     chosen = json.load(open(tmp_path / "selection_sweep_cpsam" / "selection.json"))["chosen"]
     assert chosen["lambda_topo"] == "0.01" and abs(chosen["mean_recall"] - 0.9) < 1e-9
     assert not (tmp_path / "selection").exists()       # the original selection untouched
+
+
+def test_select_config_keeps_step_2_out_of_the_choice(tmp_path):
+    import subprocess
+    cells = ["%s_lt0.0001_cyc0_trans1", "%s_lt0.01_cyc0_trans1", "%s_lt0.01_cyc1_trans1"]
+    recall = {"%s_lt0.01_cyc0_trans1": 0.8, "%s_lt0.01_cyc1_trans1": 0.95}
+    _fake_eval(tmp_path, "sweep", cells, lambda m, n: recall.get(n, 0.7), "nuclei_cpsam")
+    _fake_eval(tmp_path, "worstfield_layout", ["%s_lt0.01_cyc0_trans1"], lambda m, n: 0.6,
+               "nuclei_cpsam")
+    tool = os.path.join(os.path.dirname(__file__), "..", "tools", "select_config.py")
+    out = subprocess.run([sys.executable, tool, "--eval-root", str(tmp_path), "--arms", "sweep",
+                          "--detector", "cpsam", "--report-markers", "Ki67"],
+                         capture_output=True, text=True, check=True).stdout
+    assert "rerun   lt=0.01  cyc0 trans1" in out and "cyc1" not in out.split("TEST")[0]
+    assert "(arm=sweep, task 2)" in out                 # the + ph_cyc cell was not a candidate
+    assert "+ ph_cyc" in out and "worst field" in out
+    assert "recall vs worst field" in out and "recall vs + ph_cyc" in out

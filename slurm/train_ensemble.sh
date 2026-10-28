@@ -87,6 +87,16 @@ PY3=${PY3:-python3}
 # tools/invert_check.py.
 #
 #   sbatch --array=0-29 --time=06:00:00 --export=ALL,MARKER=Ki67,LAMBDA_LAYOUT=1,STEPS=10000,ENS_ROOT=/work2/bz66izin-TopoCG/screen_layout1 train_ensemble.sh
+#
+# LINK_SEED0=1 links seed 0 under a layout variant too, when the chosen run was
+# itself trained with the same layout term -- the rerun's sweep cells are (seed
+# 0, LAMBDA_LAYOUT=1, LAYOUT_STOP=20000), so retraining it would repeat it:
+#
+#   sbatch --array=0-9 --export=ALL,MARKER=ER,LAMBDA_LAYOUT=1,LAYOUT_STOP=20000,LINK_SEED0=1,\
+#       BEST_ARM_ROOT=/work2/bz66izin-TopoCG/sweep_layout/er,BEST_RUN=lt0.01_cyc0_trans1,\
+#       ENS_ROOT=/work2/bz66izin-TopoCG/ensemble_layout1_stop20k train_ensemble.sh
+#
+# Its layout.json must record the same weight and stop, or the task refuses.
 TOPO_START=${TOPO_START:-}
 TOPO_WARMUP=${TOPO_WARMUP:-}
 STEPS=${STEPS:-}
@@ -222,7 +232,24 @@ if (( VARIANT )); then
         echo "ERROR: a variant needs its own ENS_ROOT, not ${ENS_ROOT}" >&2; exit 1; }
 fi
 
-if [ "$SEED" = "0" ] && (( ! VARIANT )); then
+LINK_SEED0=${LINK_SEED0:-0}
+if [ "$SEED" = "0" ] && (( VARIANT )) && [ "$LINK_SEED0" = "1" ]; then
+    [ "$model" = "topo" ] || { echo "LINK_SEED0 applies to TopoCycleGAN (tasks 0-9) only" >&2; exit 1; }
+    [ -z "${TOPO_START}${TOPO_WARMUP}${STEPS}" ] || {
+        echo "ERROR: LINK_SEED0 with TOPO_START/TOPO_WARMUP/STEPS -- the run is not that variant" >&2; exit 1; }
+    "$PY3" - "${SRC_RUN}/layout.json" "${LAMBDA_LAYOUT:-0}" "${LAYOUT_STOP:-0}" <<'PYEOF' || {
+import json, sys
+try:
+    r = json.load(open(sys.argv[1]))
+except OSError:
+    sys.exit("no layout.json: the run was trained without the layout term")
+ok = float(r["lambda_layout"]) == float(sys.argv[2]) and int(r.get("stop_step") or 0) == int(sys.argv[3])
+sys.exit(0 if ok else "layout.json records lambda %s, stop %s" % (r["lambda_layout"], r.get("stop_step")))
+PYEOF
+        echo "ERROR: LINK_SEED0: ${SRC_RUN} was not trained with LAMBDA_LAYOUT=${LAMBDA_LAYOUT} LAYOUT_STOP=${LAYOUT_STOP:-none}" >&2
+        exit 1; }
+fi
+if [ "$SEED" = "0" ] && { (( ! VARIANT )) || [ "$LINK_SEED0" = "1" ]; }; then
     # The existing run IS seed 0: link it, and its predictions, into the layout.
     mkdir -p "${MODEL_DIR}/results" "${MODEL_DIR}/preds"
     ln -sfn "$SRC_RUN" "$OUTPUT"

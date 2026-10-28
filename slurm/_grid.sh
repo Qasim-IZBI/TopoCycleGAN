@@ -32,6 +32,12 @@
 # 1e-4 .. 1e-1, one decade apart (tasks 0-3), trained with the layout term so
 # no cell is lost to inversion. Everything that sources this file -- training,
 # inference, evaluation -- must see the same GRID.
+#
+# GRID=ablate is the rerun's step 2, at the lambda_topo the trans grid chose
+# (1e-2, selection_sweep_cpsam): task 0 ph_trans alone, task 1 + ph_cyc.
+# Task 0 on the audit's field IS the trans grid's cell 2, so under sweep_layout
+# only task 1 is trained; task 0 is the worst-field control
+# (sweep_worst_field.sh, its own SWEEP_ROOT).
 
 case "${GRID:-full}" in
 full)
@@ -59,8 +65,14 @@ CELLS=(
   "0.1:0:1"
 )
 ;;
+ablate)
+CELLS=(
+  "0.01:0:1"
+  "0.01:1:1"
+)
+;;
 *)
-echo "ERROR: GRID=${GRID}; full or trans" >&2
+echo "ERROR: GRID=${GRID}; full, trans or ablate" >&2
 return 1 2>/dev/null || exit 1
 ;;
 esac

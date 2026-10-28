@@ -9,6 +9,9 @@
 #                             13 cyclegan small, 14 dclgan small
 #   ARM=sweep                 the cells of the sweep under SWEEP_ROOT/<marker>,
 #                             for the GRID it was trained with (GRID=trans: 0-3)
+#   ARM=worstfield_layout     the rerun's worst-field control (GRID=ablate,
+#                             task 0) under WORST_ROOT/<marker>, default
+#                             ROOT/worstfield_layout
 #   ARM=cycsplit              the ph_cyc=1 cells of Outputs_<marker>_cycsplit
 #   ARM=worstfield_cycmerged  cells 1-12 of Outputs_<marker>_worstfield_cycmerged
 #   ARM=worstfield_cycsplit   the ph_cyc=1 cells of ..._worstfield_cycsplit
@@ -72,6 +75,9 @@ else
             # A sweep trained with SWEEP_ROOT (and GRID), e.g. the rerun.
             grid_cell "${SWEEP_ROOT:?ARM=sweep needs SWEEP_ROOT}/${MARKER_LC}"
             ;;
+        worstfield_layout)
+            grid_cell "${WORST_ROOT:-${ROOT}/worstfield_layout}/${MARKER_LC}"
+            ;;
         main)
             if (( TASK_ID < n_cells )); then
                 grid_cell "${ROOT}/Outputs_${MARKER_LC}"
@@ -129,7 +135,8 @@ else
             ;;
         *)
             echo "ERROR: unknown ARM '${ARM}'" >&2
-            echo "  main, cycsplit, worstfield_cycmerged, worstfield_cycsplit, baselines, identity" >&2
+            echo "  main, sweep, worstfield_layout, cycsplit, worstfield_cycmerged, worstfield_cycsplit," >&2
+            echo "  baselines, identity" >&2
             echo "  or ensemble" >&2
             echo "  (or set PRED and NAME for any other directory)" >&2
             exit 1

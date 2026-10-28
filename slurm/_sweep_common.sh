@@ -189,6 +189,28 @@ if [ -n "${SETTINGS_FROM:-}" ]; then
         "${PY3:-python3}" "${REPO_ROOT}/tools/run_args.py" "$meta" \
             --stains-out "${OUTPUT}/stains.json")
     (( ${#RUN_ARGS[@]} )) || { echo "ERROR: no settings read from ${meta}" >&2; exit 1; }
+    # AUDIT_DIR as well (sweep_worst_field.sh): that file's field replaces the
+    # source run's -- fields, downsample, dims, projection and stain vectors --
+    # and everything else stays the source run's. Its STAINS replaces the
+    # recorded vectors outright; empty means the literature table, so the
+    # source's --stains is dropped rather than overridden.
+    if [ -n "${AUDIT_DIR:-}" ]; then
+        kept=(); skip=0
+        for a in "${RUN_ARGS[@]}"; do
+            if (( skip )); then skip=0; continue; fi
+            if [ "$a" = "--stains" ]; then skip=1; continue; fi
+            kept+=("$a")
+        done
+        RUN_ARGS=("${kept[@]}")
+        RUN_ARGS+=(--field-A "$FIELD_A" --field-B "$FIELD_B" --field-combine "$FIELD_COMBINE"
+                   --topo-downsample "$TOPO_DOWNSAMPLE" --topo-dims $TOPO_DIMS
+                   --topo-projection "$TOPO_PROJECTION")
+        if [ -n "$STAINS" ]; then
+            [ -f "$STAINS" ] || { echo "ERROR: stain vectors not found at ${STAINS}" >&2; exit 1; }
+            RUN_ARGS+=(--stains "$STAINS")
+        fi
+        echo "field from ${AUDIT_DIR}: ${FIELD_A} | ${FIELD_B} (${FIELD_COMBINE}), stains ${STAINS:-literature}"
+    fi
     # After the source run's flags, so these win (argparse keeps the last).
     RUN_ARGS+=(--lambda-topo "$LAMBDA_TOPO" --lambda-ph-cyc "$PH_CYC" --lambda-ph-trans "$PH_TRANS")
     [ -n "${TOPO_START_SET:-}" ] && RUN_ARGS+=(--topo-start-step "$TOPO_START" --topo-warmup-steps "$TOPO_WARMUP")

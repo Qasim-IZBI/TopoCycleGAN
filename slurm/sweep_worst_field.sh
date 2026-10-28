@@ -63,6 +63,16 @@
 # those cells overrun the 48h wall and need one resubmit; they resume from
 # step_latest.pt on their own.
 #
+# THE RERUN'S STEP 2 -- the worst field at the chosen lambda, layout term on,
+# every other setting copied from the original run (SETTINGS_FROM), task 0 of
+# GRID=ablate, into its own root:
+#
+#   X="GRID=ablate,SWEEP_ROOT=$R/worstfield_layout,LAMBDA_LAYOUT=1,LAYOUT_STOP=20000,SEED=0"
+#   MARKER=ER WORST_DIR=$R/field_worst_mist sbatch --array=0 \
+#     --export=ALL,$X,SETTINGS_FROM=$R/Outputs_er/results/ER_lt0.002_cyc0_trans1 sweep_worst_field.sh
+#
+# Evaluated as ARM=worstfield_layout.
+#
 # WHY THE ARRAY STARTS AT 1. Cell 0 sets lambda_topo, ph_cyc and ph_trans all to
 # zero, and topo_terms returns before touching a field module. The baseline is
 # therefore bit-for-bit independent of which field was chosen, and the one in
@@ -104,7 +114,12 @@ esac
 
 # Its own root, per variant: RUN_NAME depends only on the grid cell, so sharing
 # a root with the real sweep would resume that run under a different field.
+# SWEEP_ROOT=<dir> (the rerun's step 2) puts it under <dir>/<marker> instead --
+# never the sweep's own root, for the same reason.
 MARKER_LC=$(echo "$MARKER" | tr 'A-Z' 'a-z')
+if [ -n "${SWEEP_ROOT:-}" ]; then
+    BASE=${BASE:-${SWEEP_ROOT}/${MARKER_LC}}
+fi
 BASE=${BASE:-/work2/bz66izin-TopoCG/Outputs_${MARKER_LC}_worstfield_${variant}}
 
 SLURM_DIR=${REPO:-${SLURM_SUBMIT_DIR:-$PWD}}

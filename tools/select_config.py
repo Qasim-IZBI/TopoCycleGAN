@@ -52,7 +52,7 @@ from typing import Dict, List, Optional, Tuple
 
 CELL_RE = re.compile(r"^(?P<m>[^_]+)_lt(?P<lt>[0-9.eE+-]+)_cyc(?P<c>\d)_trans(?P<t>\d)$")
 ARMS = ("main", "cycsplit", "worstfield_cycmerged", "worstfield_cycsplit", "baselines",
-        "identity", "custom", "sweep")
+        "identity", "custom", "sweep", "worstfield_layout")
 
 
 def read_rows(path: str) -> List[List[str]]:
@@ -221,6 +221,8 @@ def main() -> None:
         cm = CELL_RE.match(name)
         if not cm or cm.group("t") != "1":
             continue
+        if arm == "sweep" and cm.group("c") != "0":
+            continue                  # step 2's + ph_cyc cell: not a lambda candidate
         n = mod.nuclei("sel")
         if n:
             configs[(arm, cm.group("lt"), cm.group("c"), cm.group("t"))][m] = n
@@ -269,6 +271,10 @@ def main() -> None:
                                                           best["ph_cyc"], best["ph_trans"])
         if which == "identity":
             return "identity", "%s_identity" % m
+        if which == "worst":          # rerun step 2: the chosen cell on the worst field
+            return "worstfield_layout", name_of(m, "best")[1]
+        if which == "phcyc":          # rerun step 2: the chosen cell + ph_cyc
+            return best["arm"], "%s_lt%s_cyc1_trans1" % (m, best["lambda_topo"])
         return "main", "%s_%s_small" % (m, which)
 
     contenders = (("best", "TopoCycleGAN (chosen)"), ("cyclegan", "CycleGAN small"),
@@ -276,7 +282,9 @@ def main() -> None:
     if rerun:
         # The baselines here were trained without the layout term; compare
         # against the layout ensembles' members instead (ensemble_report.py).
-        contenders = (contenders[0], contenders[3])
+        # Step 2's two cells, where trained, are set against the chosen one.
+        contenders = (contenders[0], ("phcyc", "+ ph_cyc"), ("worst", "worst field"),
+                      contenders[3])
     print("\nTEST -- test half; FID only once `split_eval.sh fid` has run for it")
     rows = []
     for m in args.report_markers:
@@ -296,7 +304,8 @@ def main() -> None:
                          *(fmt(n.get(k), 4) for k in ("recall", "precision", "f1")),
                          fmt(ssim, 4), fmt(lp, 5), fmt(fid, 3)])
         best_mod = models.get((m,) + name_of(m, "best"))
-        for which, nice in [c for c in contenders if c[0] in ("cyclegan", "dclgan")]:
+        for which, nice in [c for c in contenders
+                            if c[0] in ("cyclegan", "dclgan", "phcyc", "worst")]:
             base = models.get((m,) + name_of(m, which))
             if best_mod and base:
                 d, lo, hi = bootstrap_diff(best_mod.slide_sums("test"), base.slide_sums("test"),
