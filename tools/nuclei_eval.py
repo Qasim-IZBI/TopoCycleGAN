@@ -53,10 +53,23 @@ WHAT IS SAVED
   <out>/nuclei_topo_tiles.csv      H&E vs generated nuclei masks, pooled and per
                                    tile (tools/betti_eval.py: settings fixed there)
 
-TOPOLOGY ONLY. --topo-only segments the generated IHC again and writes only the
-two nuclei_topo files, leaving nuclei.csv and everything else as it was -- how
-models scored before the topology metrics existed get them without their
-recall being recomputed.
+  <out>/nuclei_positivity.csv      share of DAB-positive nuclei, real vs generated
+  <out>/nuclei_positivity_tiles.csv IHC, pooled and per tile, and every generated
+  <out>/nuclei_dab.npz             nucleus's mean DAB (tools/positivity_eval.py)
+  <ref-cache>/real_<config>/       the REAL IHC's label masks (same segmenter as
+                                   the generated side) and dab_threshold_*.json,
+                                   the marker's fixed positivity threshold
+
+POSITIVITY. The real IHC of the split (--ihc; default the B directory beside
+--he: valA -> valB) is segmented with the generated IHC's own segmenter, once
+per marker, and its per-nucleus DAB sets one Otsu threshold every model is
+scored against. Without a real IHC directory (VS) the positivity files are not
+written.
+
+ONE PART ONLY. --only topo / --only positivity segments the generated IHC again
+and writes only that part's files, leaving nuclei.csv and everything else as it
+was -- how models scored before those metrics existed get them without their
+recall being recomputed. --topo-only is --only topo.
 
 Like the pilot, this is a standalone script run by path from the stardist
 environment; it imports the pilot's loading and segmentation code.
@@ -71,6 +84,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import os
 import random
 import sys
@@ -84,6 +98,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from nuclei_pilot import (DETECTORS, INK, INK_2, SURFACE, iou_match,  # noqa: E402
                           list_tiles, load_rgb, make_segmenter)
 import betti_eval  # noqa: E402
+import positivity_eval as pos_eval  # noqa: E402
 
 import matplotlib  # noqa: E402
 
@@ -314,6 +329,67 @@ def write_topo(out: str, topo_rows, marker: str) -> None:
                  pooled["betti0_err_mean"], pooled["betti1_err_mean"]))
 
 
+# ---------------------------------------------------------------- positivity
+
+def real_ihc_dir(he_dir: str) -> Optional[str]:
+    """.../valA -> .../valB (testA -> testB), if it exists."""
+    d = os.path.normpath(he_dir)
+    if not d.endswith("A"):
+        return None
+    b = d[:-1] + "B"
+    return b if os.path.isdir(b) else None
+
+
+def dab_threshold(seg, real: Dict[str, str], stems: List[str], cache_dir: str,
+                  variant: str, scale: float, marker: str, grow: int) -> float:
+    """The marker's fixed threshold: Otsu of the real IHC's per-nucleus DAB.
+    Computed once and stored beside the real masks; every model reads it."""
+    tag = pos_eval.COMPARTMENT.get(marker, "nucleus")
+    path = os.path.join(cache_dir, "dab_threshold_%s%s.json"
+                        % (tag, "_g%d" % grow if tag == "cell" else ""))
+    if os.path.isfile(path):
+        with open(path) as fh:
+            return float(json.load(fh)["threshold"])
+    vals = []
+    t0 = time.time()
+    for k, s in enumerate(stems, 1):
+        lab = reference(seg, real[s], cache_dir, variant, scale)
+        vals.append(pos_eval.measure(load_rgb(real[s]), lab, marker, grow))
+        if k % 200 == 0 or k == len(stems):
+            print("[real IHC] %d/%d  %.2fs/tile" % (k, len(stems), (time.time() - t0) / k))
+    thr = pos_eval.otsu(vals)
+    allv = np.concatenate(vals)
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    with open(tmp, "w") as fh:
+        json.dump({"threshold": thr, "method": "otsu", "marker": marker, "compartment": tag,
+                   "cell_grow": grow, "n_tiles": len(stems), "n_nuclei": int(len(allv)),
+                   "positive_rate": float((allv > thr).mean())}, fh, indent=2)
+    os.replace(tmp, path)
+    print("[real IHC] %s DAB threshold %.4f (Otsu over %d nuclei, %.1f%% positive) -> %s"
+          % (marker, thr, len(allv), 100 * (allv > thr).mean(), path))
+    return thr
+
+
+def write_positivity(out: str, stems, real, gen, gen_on_he, thr: float, marker: str) -> None:
+    with open(os.path.join(out, "nuclei_positivity_tiles.csv"), "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(("tile",) + pos_eval.TILE_COLUMNS)
+        for s, r, g, h in zip(stems, real, gen, gen_on_he):
+            row = pos_eval.tile_row(r, g, thr, h)
+            w.writerow([s] + [row[c] for c in pos_eval.TILE_COLUMNS])
+    pooled = pos_eval.pooled(real, gen, thr, gen_on_he)
+    with open(os.path.join(out, "nuclei_positivity.csv"), "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["metric", "value"])
+        w.writerows(sorted(pooled.items()))
+        w.writerow(["compartment", pos_eval.COMPARTMENT.get(marker, "nucleus")])
+    np.savez_compressed(os.path.join(out, "nuclei_dab.npz"), tiles=np.array(stems),
+                        tile=np.repeat(np.arange(len(gen)), [len(g) for g in gen]).astype(np.int32),
+                        dab=np.concatenate(gen) if gen else np.zeros(0, np.float32),
+                        threshold=thr)
+    print("[%s] %s" % (marker, pos_eval.summary_line(pooled)))
+
+
 # ---------------------------------------------------------------- main
 
 def main() -> None:
@@ -343,10 +419,20 @@ def main() -> None:
     p.add_argument("--save-masks", action="store_true",
                    help="also keep every generated-IHC label mask (~10-20 MB per model)")
     p.add_argument("--limit", type=int, default=0, help="first N tiles only (testing)")
-    p.add_argument("--topo-only", action="store_true",
-                   help="write only nuclei_topo.csv / nuclei_topo_tiles.csv (Betti errors); "
-                        "leave nuclei.csv and the rest untouched")
+    p.add_argument("--only", choices=("topo", "positivity"), default=None,
+                   help="write only that part's files (nuclei_topo*.csv or "
+                        "nuclei_positivity*.csv); leave nuclei.csv and the rest untouched")
+    p.add_argument("--topo-only", action="store_true", help="the same as --only topo")
+    p.add_argument("--ihc", default=None,
+                   help="the REAL IHC split for positivity (default: --he with A -> B)")
+    p.add_argument("--no-positivity", action="store_true")
+    p.add_argument("--dab-threshold", type=float, default=None,
+                   help="instead of the Otsu threshold of the real IHC")
+    p.add_argument("--cell-grow", type=int, default=pos_eval.CELL_GROW,
+                   help="px a nucleus is grown by for the membranous markers (HER2, BCI)")
     args = p.parse_args()
+    if args.topo_only:
+        args.only = "topo"
 
     found = settings(args.detector, args.marker)
     if found is None and None in (args.he_scale, args.ihc_variant, args.ihc_scale):
@@ -368,6 +454,28 @@ def main() -> None:
         sys.exit("no tiles under %s" % args.he)
     seg = make_segmenter(args.detector, args.models_dir)
 
+    # The real IHC, for positivity: segmented like the generated IHC, cached
+    # per marker beside the H&E reference.
+    real: Dict[str, str] = {}
+    want_pos = not args.no_positivity and args.only != "topo"
+    ihc_dir = args.ihc or real_ihc_dir(args.he)
+    if want_pos and ihc_dir:
+        real = list_tiles(ihc_dir)
+    elif want_pos:
+        print("[positivity] no real IHC beside %s (give --ihc): not scored" % args.he)
+    real_cache = os.path.join(args.ref_cache, "real_%s_x%g" % (ihc_variant, ihc_scale))
+    real_stems = sorted(set(he) & set(real))[: args.limit or None]
+    if real and not real_stems:
+        print("[positivity] no real IHC tile in %s shares a name with %s: not scored"
+              % (ihc_dir, args.he))
+    thr = None
+    if real_stems:
+        os.makedirs(real_cache, exist_ok=True)
+        thr = args.dab_threshold
+        if thr is None:
+            thr = dab_threshold(seg, real, real_stems, real_cache, ihc_variant, ihc_scale,
+                                args.marker, args.cell_grow)
+
     if args.ref_only:
         stems = sorted(he)[: args.limit or None]
         t0 = time.time()
@@ -380,6 +488,8 @@ def main() -> None:
                  ", %d that crashed the detector: %s" % (len(FAILED), " ".join(FAILED))
                  if FAILED else ""))
         return
+    if args.only == "positivity" and thr is None:
+        sys.exit("--only positivity, but there is no real IHC to compare with")
 
     if not (args.pred and args.out):
         p.error("--pred and --out are required unless --ref-only")
@@ -394,7 +504,7 @@ def main() -> None:
     if args.save_masks:
         os.makedirs(mask_dir, exist_ok=True)
 
-    fig_set = set() if args.topo_only else set(
+    fig_set = set() if args.only else set(
         figure_tiles(he, args.figures, args.seed, seg, cache_dir, he_variant, he_scale))
     if fig_set:
         os.makedirs(fig_dir, exist_ok=True)
@@ -410,6 +520,7 @@ def main() -> None:
     n_ref = n_pred = 0
     tile_rows = []
     topo_rows = []
+    pos_stems, pos_real, pos_gen, pos_he = [], [], [], []
     cent_tile, cent_yx, cent_area = [], [], []
     t0 = time.time()
 
@@ -421,9 +532,16 @@ def main() -> None:
             img = np.asarray(Image.fromarray(img).resize(he_img.shape[1::-1], Image.BILINEAR))
         lab = guarded(seg, ihc_variant, img, ihc_scale,
                       os.path.join(args.out, ".inflight"), s)
-        topo = betti_eval.topo_compare(ref, lab)
-        topo_rows.append((s, topo))
-        if args.topo_only:
+        if args.only != "positivity":
+            topo_rows.append((s, betti_eval.topo_compare(ref, lab)))
+        if thr is not None and s in real:
+            rlab = reference(seg, real[s], real_cache, ihc_variant, ihc_scale)
+            pos_stems.append(s)
+            pos_real.append(pos_eval.measure(load_rgb(real[s]), rlab, args.marker, args.cell_grow))
+            pos_gen.append(pos_eval.measure(img, lab, args.marker, args.cell_grow))
+            pos_he.append(pos_eval.measure(img, ref, args.marker, args.cell_grow)
+                          if ref.shape == img.shape[:2] else np.zeros(0, np.float32))
+        if args.only:
             if k % 200 == 0 or k == len(stems):
                 print("  %d/%d  %.2fs/tile" % (k, len(stems), (time.time() - t0) / k))
             continue
@@ -471,8 +589,11 @@ def main() -> None:
         if k % 200 == 0 or k == len(stems):
             print("  %d/%d  %.2fs/tile" % (k, len(stems), (time.time() - t0) / k))
 
-    write_topo(args.out, topo_rows, args.marker)
-    if args.topo_only:
+    if args.only != "positivity":
+        write_topo(args.out, topo_rows, args.marker)
+    if thr is not None:
+        write_positivity(args.out, pos_stems, pos_real, pos_gen, pos_he, thr, args.marker)
+    if args.only:
         return
 
     rec, prec, f1 = prf(*tot[primary])

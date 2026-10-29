@@ -206,3 +206,48 @@ def test_pooled_normalises_by_features():
     p = pooled(tiles)
     assert p["bm0_mean"] == pytest.approx(1.0) and p["bm0_norm"] == pytest.approx(2 / 10)
     assert p["bm1_norm"] == pytest.approx(1.0) and p["betti0_err_mean"] == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------- positivity
+
+def _ihc(labels, positive, shape=(40, 40)):
+    """RGB IHC tile: haematoxylin-blue nuclei, DAB-brown for the positive ids."""
+    rgb = np.full(shape + (3,), 235, np.uint8)
+    rgb[labels > 0] = (90, 90, 160)
+    for i in positive:
+        rgb[labels == i] = (140, 80, 30)
+    return rgb
+
+
+def test_positive_nuclei_carry_more_dab():
+    pytest.importorskip("skimage")
+    import positivity_eval as pe
+    lab = boxes([(1, 0, 8, 0, 8), (2, 20, 28, 20, 28), (3, 30, 38, 0, 8)])
+    v = pe.measure(_ihc(lab, [2]), lab, "Ki67")
+    assert len(v) == 3 and v[1] > 3 * max(v[0], v[2])
+    thr = pe.otsu([v])
+    assert v[0] < thr < v[1]
+    row = pe.tile_row(v, v, thr)
+    assert (row["pos_real"], row["rate_gen"]) == (1, pytest.approx(1 / 3))
+
+
+def test_membranous_markers_read_the_grown_cell():
+    pytest.importorskip("skimage")
+    import positivity_eval as pe
+    lab = boxes([(1, 10, 16, 10, 16)])
+    rgb = np.full((40, 40, 3), 235, np.uint8)
+    rgb[8:18, 8:18] = (140, 80, 30)           # DAB ring around the nucleus
+    rgb[10:16, 10:16] = (90, 90, 160)          # blue nucleus inside
+    assert pe.measure(rgb, lab, "HER2")[0] > 3 * pe.measure(rgb, lab, "Ki67")[0]
+
+
+def test_pooled_positivity_rates_and_tile_agreement():
+    import positivity_eval as pe
+    real = [np.array([1.0] * 6 + [0.0] * 4), np.array([0.0] * 10), np.array([1.0] * 2)]
+    gen = [np.array([1.0] * 3 + [0.0] * 7), np.array([1.0] + [0.0] * 9), np.array([0.0] * 2)]
+    p = pe.pooled(real, gen, 0.5)
+    assert p["pos_rate_real"] == pytest.approx(8 / 22)
+    assert p["pos_rate_gen"] == pytest.approx(4 / 22)
+    assert p["tile_n"] == 2                    # the 2-nucleus tile is left out
+    assert p["tile_mae"] == pytest.approx((0.3 + 0.1) / 2)
+    assert np.isnan(p["tile_pearson"])         # two tiles: no correlation

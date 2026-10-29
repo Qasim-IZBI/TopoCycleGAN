@@ -63,6 +63,18 @@
 #
 #   sbatch --gres=gpu:1 --array=0-29 --export=ALL,MARKER=Ki67,ARM=ensemble,DETECTOR=cpsam,TOPO_ONLY=1,EVAL_ROOT=... evaluate_nuclei.sh
 #   MARKER=Ki67 DETECTOR=cpsam TOPO_ONLY=1 EVAL_ROOT=... bash evaluate_nuclei.sh missing
+#
+# POSITIVITY. Every run also writes nuclei_positivity.csv and _tiles.csv -- the
+# share of DAB-positive nuclei in the real IHC (TrainValAB/<split with B>) and
+# in the generated IHC, pooled and per tile (tools/positivity_eval.py). The
+# real IHC is segmented by the same detector, once per marker, and sets the
+# marker's DAB threshold (Otsu): the ref job does both, so rerun it for a
+# marker whose reference was built before -- the H&E masks stay cached, only
+# the real IHC is segmented. ONLY=positivity scores just that for models done
+# before (skips those with nuclei_positivity.csv; `missing` lists the rest):
+#
+#   ref=$(sbatch --parsable --gres=gpu:1 --array=0 --export=ALL,MARKER=Ki67,DETECTOR=cpsam,EVAL_ROOT=... evaluate_nuclei.sh ref)
+#   sbatch --dependency=afterok:$ref --gres=gpu:1 --array=0-29 --export=ALL,MARKER=Ki67,ARM=ensemble,DETECTOR=cpsam,ONLY=positivity,EVAL_ROOT=... evaluate_nuclei.sh
 # SAVE_MASKS=1 keeps every generated-IHC label mask (~10-20 MB per model).
 #
 # OTHER DETECTORS. DETECTOR=instanseg or cpsam (tools/nuclei_detectors.py) runs
@@ -100,9 +112,15 @@ case "$DETECTOR" in
     *) echo "ERROR: DETECTOR=${DETECTOR}; one of stardist, instanseg, cpsam" >&2; exit 1 ;;
 esac
 REPO_ROOT=${REPO_ROOT:-/home/sc.uni-leipzig.de/bz66izin/TopoCG_Project/TopoCycleGAN}
-# What marks a model as scored: its topology file under TOPO_ONLY=1.
-DONE_FILE=nuclei.csv
-[ "${TOPO_ONLY:-0}" = "1" ] && DONE_FILE=nuclei_topo.csv
+# ONLY=topo / ONLY=positivity scores just that part (TOPO_ONLY=1 = ONLY=topo);
+# what marks a model as scored is then that part's file.
+[ "${TOPO_ONLY:-0}" = "1" ] && ONLY=${ONLY:-topo}
+case "${ONLY:-}" in
+    "")         DONE_FILE=nuclei.csv ;;
+    topo)       DONE_FILE=nuclei_topo.csv ;;
+    positivity) DONE_FILE=nuclei_positivity.csv ;;
+    *) echo "ERROR: ONLY=${ONLY}; one of topo, positivity" >&2; exit 1 ;;
+esac
 EVAL_PY="${REPO_ROOT}/tools/nuclei_eval.py"
 FIGURES=${FIGURES:-12}
 
@@ -182,7 +200,7 @@ if [ "$MODE" = "missing" ]; then
         tasks=$(IFS=,; echo "${todo[*]}")
         cmd=(sbatch --time="${TIME:-02:00:00}" --array="$tasks" --job-name="topo_eval_nuclei_${MARKER}"
              ${DETECTOR_GPU:+--gres=gpu:1}
-             --export=ALL,MARKER="$MARKER",ARM="$arm",DETECTOR="$DETECTOR"${TOPO_ONLY:+,TOPO_ONLY=$TOPO_ONLY} evaluate_nuclei.sh)
+             --export=ALL,MARKER="$MARKER",ARM="$arm",DETECTOR="$DETECTOR"${ONLY:+,ONLY=$ONLY} evaluate_nuclei.sh)
         if [ "${SUBMIT:-0}" = "1" ]; then
             echo "  -> $(cd "$_slurm" && "${cmd[@]}")"
         else
@@ -257,7 +275,7 @@ fi
 # ref: the H&E reference cache, once per marker
 # -----------------------------
 if [ "$MODE" = "ref" ]; then
-    echo "H&E reference for ${MARKER}/${SPLIT}: ${HE} -> ${REF_CACHE}"
+    echo "H&E reference (and real IHC + DAB threshold) for ${MARKER}/${SPLIT}: ${HE} -> ${REF_CACHE}"
     "$PYTHON" "$EVAL_PY" --marker "$MARKER" --he "$HE" --ref-cache "$REF_CACHE" \
         --detector "$DETECTOR" --models-dir "$MODELS_DIR" --ref-only
     exit 0
@@ -281,6 +299,6 @@ fi
 "$PYTHON" "$EVAL_PY" --marker "$MARKER" --he "$HE" --pred "$PRED" \
     --ref-cache "$REF_CACHE" --detector "$DETECTOR" --models-dir "$MODELS_DIR" --out "$OUT" \
     --figures "$FIGURES" ${SAVE_MASKS:+--save-masks} \
-    $( [ "${TOPO_ONLY:-0}" = "1" ] && echo --topo-only )
+    ${ONLY:+--only $ONLY}
 
 echo "Done: ${ARM} / ${NAME}"
