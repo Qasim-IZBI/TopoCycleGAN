@@ -131,3 +131,78 @@ def test_select_config_keeps_step_2_out_of_the_choice(tmp_path):
     assert "(arm=sweep, task 2)" in out                 # the + ph_cyc cell was not a candidate
     assert "+ ph_cyc" in out and "worst field" in out
     assert "recall vs worst field" in out and "recall vs + ph_cyc" in out
+
+
+# ---------------------------------------------------------------- Betti errors
+
+def _disc(shape, cy, cx, r, label=1, into=None):
+    yy, xx = np.mgrid[:shape[0], :shape[1]]
+    lab = np.zeros(shape, np.int32) if into is None else into
+    lab[(yy - cy) ** 2 + (xx - cx) ** 2 <= r * r] = label
+    return lab
+
+
+def test_touching_nuclei_stay_two_components_and_specks_go():
+    from betti_eval import binary_nuclei, components
+    lab = boxes([(1, 5, 15, 5, 15), (2, 5, 15, 15, 25)])        # share an edge
+    assert components(binary_nuclei(lab))[1] == 2
+    lab[30, 30] = 3                                            # a 1 px speck
+    assert components(binary_nuclei(lab))[1] == 2
+    assert components(binary_nuclei(lab, min_size=1))[1] == 3
+
+
+def test_identical_masks_have_no_errors():
+    from betti_eval import tile_errors, topo_compare
+    lab = boxes([(1, 2, 8, 2, 8), (2, 20, 30, 20, 30)])
+    t = topo_compare(lab, lab)
+    assert (t["b0_ref"], t["m0"]) == (2, 2)
+    assert set(tile_errors(t).values()) == {0}
+
+
+def test_bm0_counts_nuclei_without_a_counterpart():
+    from betti_eval import tile_errors, topo_compare
+    ref = boxes([(1, 2, 10, 2, 10), (2, 20, 30, 20, 30)])
+    pred = boxes([(1, 3, 9, 3, 9), (2, 0, 6, 32, 38)])   # one overlaps, one is new
+    t = dict(topo_compare(ref, pred))
+    e = tile_errors(t)
+    assert (t["b0_ref"], t["b0_pred"], t["m0"]) == (2, 2, 1)
+    assert e["bm0"] == 2 and e["betti0_err"] == 0          # counts agree, places do not
+    # a nucleus split in two matches once: one feature left over
+    split = boxes([(1, 2, 10, 2, 5), (2, 2, 10, 7, 10), (3, 20, 30, 20, 30)])
+    assert tile_errors(topo_compare(ref, split))["bm0"] == 1
+
+
+def test_inverted_layout_is_all_error():
+    from betti_eval import tile_errors, topo_compare
+    ref = boxes([(1, 2, 8, 2, 8), (2, 20, 26, 20, 26)])
+    pred = boxes([(1, 2, 8, 30, 38), (2, 30, 38, 2, 8)])
+    t = topo_compare(ref, pred)
+    assert t["m0"] == 0 and tile_errors(t)["bm0"] == 4
+
+
+def test_holes_are_bounded_and_matched_by_place():
+    from betti_eval import holes, tile_errors, topo_compare
+    ring = _disc((40, 40), 20, 20, 10)
+    ring[_disc((40, 40), 20, 20, 5) > 0] = 0
+    assert holes(ring > 0)[1] == 1
+    open_ring = ring.copy()
+    open_ring[:, 25:] = 0                                      # cut open: no hole
+    assert holes(open_ring > 0)[1] == 0
+    edge = np.zeros((40, 40), np.int32)
+    edge[0:10, 0:10] = 1
+    edge[0:5, 0:5] = 0                                         # notch at the border
+    assert holes(edge > 0)[1] == 0
+    t = topo_compare(ring, ring)
+    assert (t["b1_ref"], t["m1"]) == (1, 1) and tile_errors(t)["bm1"] == 0
+    filled = _disc((40, 40), 20, 20, 10)
+    e = tile_errors(topo_compare(ring, filled))
+    assert e["bm1"] == 1 and e["betti1_err"] == 1
+
+
+def test_pooled_normalises_by_features():
+    from betti_eval import pooled
+    tiles = [{"b0_ref": 4, "b0_pred": 4, "m0": 4, "b1_ref": 0, "b1_pred": 0, "m1": 0},
+             {"b0_ref": 2, "b0_pred": 0, "m0": 0, "b1_ref": 1, "b1_pred": 1, "m1": 0}]
+    p = pooled(tiles)
+    assert p["bm0_mean"] == pytest.approx(1.0) and p["bm0_norm"] == pytest.approx(2 / 10)
+    assert p["bm1_norm"] == pytest.approx(1.0) and p["betti0_err_mean"] == pytest.approx(1.0)

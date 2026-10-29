@@ -49,6 +49,14 @@ WHAT IS SAVED
                                    set of tissue-rich tiles, the SAME tiles for
                                    every model -- paper panels side by side
   <out>/masks/<tile>.npz           generated-IHC label masks, with --save-masks
+  <out>/nuclei_topo.csv            Betti number and Betti matching errors of the
+  <out>/nuclei_topo_tiles.csv      H&E vs generated nuclei masks, pooled and per
+                                   tile (tools/betti_eval.py: settings fixed there)
+
+TOPOLOGY ONLY. --topo-only segments the generated IHC again and writes only the
+two nuclei_topo files, leaving nuclei.csv and everything else as it was -- how
+models scored before the topology metrics existed get them without their
+recall being recomputed.
 
 Like the pilot, this is a standalone script run by path from the stardist
 environment; it imports the pilot's loading and segmentation code.
@@ -75,6 +83,7 @@ from PIL import Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from nuclei_pilot import (DETECTORS, INK, INK_2, SURFACE, iou_match,  # noqa: E402
                           list_tiles, load_rgb, make_segmenter)
+import betti_eval  # noqa: E402
 
 import matplotlib  # noqa: E402
 
@@ -281,6 +290,30 @@ def draw_figure(path: str, title: str, he_rgb: np.ndarray, ihc_rgb: np.ndarray,
     plt.close(fig)
 
 
+# ---------------------------------------------------------------- topology
+
+def write_topo(out: str, topo_rows, marker: str) -> None:
+    """nuclei_topo_tiles.csv (per tile) and nuclei_topo.csv (pooled)."""
+    cols = betti_eval.TILE_COLUMNS
+    with open(os.path.join(out, "nuclei_topo_tiles.csv"), "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(("tile",) + cols)
+        for s, t in topo_rows:
+            t = dict(t, **betti_eval.tile_errors(t))
+            w.writerow([s] + [t[c] for c in cols])
+    pooled = betti_eval.pooled([t for _, t in topo_rows])
+    with open(os.path.join(out, "nuclei_topo.csv"), "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["metric", "value"])
+        w.writerows(sorted(pooled.items()))
+        w.writerow(["topo_settings", betti_eval.SETTINGS])
+    if pooled:
+        print("[%s] topology: BM0 %.2f/tile (norm %.3f)  BM1 %.2f/tile  "
+              "Betti-0 err %.2f  Betti-1 err %.2f"
+              % (marker, pooled["bm0_mean"], pooled["bm0_norm"], pooled["bm1_mean"],
+                 pooled["betti0_err_mean"], pooled["betti1_err_mean"]))
+
+
 # ---------------------------------------------------------------- main
 
 def main() -> None:
@@ -310,6 +343,9 @@ def main() -> None:
     p.add_argument("--save-masks", action="store_true",
                    help="also keep every generated-IHC label mask (~10-20 MB per model)")
     p.add_argument("--limit", type=int, default=0, help="first N tiles only (testing)")
+    p.add_argument("--topo-only", action="store_true",
+                   help="write only nuclei_topo.csv / nuclei_topo_tiles.csv (Betti errors); "
+                        "leave nuclei.csv and the rest untouched")
     args = p.parse_args()
 
     found = settings(args.detector, args.marker)
@@ -358,8 +394,8 @@ def main() -> None:
     if args.save_masks:
         os.makedirs(mask_dir, exist_ok=True)
 
-    fig_set = set(figure_tiles(he, args.figures, args.seed, seg, cache_dir,
-                               he_variant, he_scale))
+    fig_set = set() if args.topo_only else set(
+        figure_tiles(he, args.figures, args.seed, seg, cache_dir, he_variant, he_scale))
     if fig_set:
         os.makedirs(fig_dir, exist_ok=True)
 
@@ -373,6 +409,7 @@ def main() -> None:
     iou_scores: List[float] = []
     n_ref = n_pred = 0
     tile_rows = []
+    topo_rows = []
     cent_tile, cent_yx, cent_area = [], [], []
     t0 = time.time()
 
@@ -384,6 +421,12 @@ def main() -> None:
             img = np.asarray(Image.fromarray(img).resize(he_img.shape[1::-1], Image.BILINEAR))
         lab = guarded(seg, ihc_variant, img, ihc_scale,
                       os.path.join(args.out, ".inflight"), s)
+        topo = betti_eval.topo_compare(ref, lab)
+        topo_rows.append((s, topo))
+        if args.topo_only:
+            if k % 200 == 0 or k == len(stems):
+                print("  %d/%d  %.2fs/tile" % (k, len(stems), (time.time() - t0) / k))
+            continue
 
         rid, rc, _ = nuclei_table(ref)
         pid, pc, pa = nuclei_table(lab)
@@ -427,6 +470,10 @@ def main() -> None:
 
         if k % 200 == 0 or k == len(stems):
             print("  %d/%d  %.2fs/tile" % (k, len(stems), (time.time() - t0) / k))
+
+    write_topo(args.out, topo_rows, args.marker)
+    if args.topo_only:
+        return
 
     rec, prec, f1 = prf(*tot[primary])
     rows = [("recall", rec), ("precision", prec), ("f1", f1)]

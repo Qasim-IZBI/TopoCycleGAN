@@ -53,6 +53,16 @@
 #   MARKER=ER SUBMIT=1 bash evaluate_nuclei.sh missing
 #
 # A model whose nuclei.csv exists is skipped; FORCE=1 recomputes it.
+#
+# TOPOLOGY. Every run also writes nuclei_topo.csv and nuclei_topo_tiles.csv --
+# Betti number and Betti matching errors of the H&E vs generated nuclei masks
+# (tools/betti_eval.py). For models scored before those existed, TOPO_ONLY=1
+# segments the generated IHC again and writes only those two files; nuclei.csv
+# is left as it was. It skips models that have nuclei_topo.csv, and `missing`
+# lists the ones without it. Same arrays and DETECTOR as the original scoring:
+#
+#   sbatch --gres=gpu:1 --array=0-29 --export=ALL,MARKER=Ki67,ARM=ensemble,DETECTOR=cpsam,TOPO_ONLY=1,EVAL_ROOT=... evaluate_nuclei.sh
+#   MARKER=Ki67 DETECTOR=cpsam TOPO_ONLY=1 EVAL_ROOT=... bash evaluate_nuclei.sh missing
 # SAVE_MASKS=1 keeps every generated-IHC label mask (~10-20 MB per model).
 #
 # OTHER DETECTORS. DETECTOR=instanseg or cpsam (tools/nuclei_detectors.py) runs
@@ -90,6 +100,9 @@ case "$DETECTOR" in
     *) echo "ERROR: DETECTOR=${DETECTOR}; one of stardist, instanseg, cpsam" >&2; exit 1 ;;
 esac
 REPO_ROOT=${REPO_ROOT:-/home/sc.uni-leipzig.de/bz66izin/TopoCG_Project/TopoCycleGAN}
+# What marks a model as scored: its topology file under TOPO_ONLY=1.
+DONE_FILE=nuclei.csv
+[ "${TOPO_ONLY:-0}" = "1" ] && DONE_FILE=nuclei_topo.csv
 EVAL_PY="${REPO_ROOT}/tools/nuclei_eval.py"
 FIGURES=${FIGURES:-12}
 
@@ -156,7 +169,7 @@ if [ "$MODE" = "missing" ]; then
             case "$line" in *"|"*) ;; *) continue ;; esac
             pred=${line%%|*} name=${line#*|}
             [ -n "$name" ] || continue
-            if [ -f "${EVAL_DIR}/${arm}/${name}/${NUC_SUB:+${NUC_SUB}/}nuclei.csv" ]; then
+            if [ -f "${EVAL_DIR}/${arm}/${name}/${NUC_SUB:+${NUC_SUB}/}${DONE_FILE}" ]; then
                 n_done=$((n_done + 1))
             elif [ -d "$pred" ]; then
                 todo+=("$t"); n_todo=$((n_todo + 1))
@@ -169,7 +182,7 @@ if [ "$MODE" = "missing" ]; then
         tasks=$(IFS=,; echo "${todo[*]}")
         cmd=(sbatch --time="${TIME:-02:00:00}" --array="$tasks" --job-name="topo_eval_nuclei_${MARKER}"
              ${DETECTOR_GPU:+--gres=gpu:1}
-             --export=ALL,MARKER="$MARKER",ARM="$arm",DETECTOR="$DETECTOR" evaluate_nuclei.sh)
+             --export=ALL,MARKER="$MARKER",ARM="$arm",DETECTOR="$DETECTOR"${TOPO_ONLY:+,TOPO_ONLY=$TOPO_ONLY} evaluate_nuclei.sh)
         if [ "${SUBMIT:-0}" = "1" ]; then
             echo "  -> $(cd "$_slurm" && "${cmd[@]}")"
         else
@@ -260,13 +273,14 @@ if [ ! -d "$PRED" ]; then
     echo "  no predictions yet; nothing to evaluate"
     exit 0
 fi
-if [ -f "${OUT}/nuclei.csv" ] && [ "${FORCE:-0}" != "1" ]; then
-    echo "[skip] ${OUT}/nuclei.csv exists (FORCE=1 recomputes)"
+if [ -f "${OUT}/${DONE_FILE}" ] && [ "${FORCE:-0}" != "1" ]; then
+    echo "[skip] ${OUT}/${DONE_FILE} exists (FORCE=1 recomputes)"
     exit 0
 fi
 
 "$PYTHON" "$EVAL_PY" --marker "$MARKER" --he "$HE" --pred "$PRED" \
     --ref-cache "$REF_CACHE" --detector "$DETECTOR" --models-dir "$MODELS_DIR" --out "$OUT" \
-    --figures "$FIGURES" ${SAVE_MASKS:+--save-masks}
+    --figures "$FIGURES" ${SAVE_MASKS:+--save-masks} \
+    $( [ "${TOPO_ONLY:-0}" = "1" ] && echo --topo-only )
 
 echo "Done: ${ARM} / ${NAME}"
