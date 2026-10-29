@@ -30,3 +30,18 @@ def test_plotted_pair_is_the_distance(how):
     pa, pb = sorted_pair(a, b, 0, how)
     assert len(pa) == len(pb) == 11
     assert np.abs(pa - pb).sum() == pytest.approx(float(diagram_distance(a, b, (0,), how)))
+
+
+def test_seed_dirs_in_an_ensemble_and_an_archive(tmp_path):
+    from topo_i2i.seeds_figure import seed_dirs
+    for k in (0, 1, 10):
+        (tmp_path / "ens" / "results" / ("seed%d" % k) / "checkpoints").mkdir(parents=True)
+    assert list(seed_dirs(str(tmp_path / "ens"))) == [0, 1, 10]          # numeric order
+    arc = tmp_path / "archive"
+    for k in (2, 5):
+        (arc / "members" / "topo" / ("seed%d" % k) / "checkpoints").mkdir(parents=True)
+    (arc / "eval" / "seed2").mkdir(parents=True)                         # no checkpoints/
+    assert list(seed_dirs(str(arc))) == [2, 5]
+    (arc / "copy" / "seed5" / "checkpoints").mkdir(parents=True)
+    with pytest.raises(ValueError):
+        seed_dirs(str(arc))
