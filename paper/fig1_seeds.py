@@ -10,7 +10,7 @@ Run it on the original ensemble to show the inverted seeds, and on the
 ensemble trained with the layout term to show them gone; several ensembles in
 one call become one row each of a single grid:
 
-    topo-seeds-figure --image he.tif --domain he --n-seeds 10 --outdir fig1/ki67 \\
+    python paper/fig1_seeds.py --image he.tif --domain he --n-seeds 10 --outdir fig1/ki67 \\
         --ens "no layout term=$R/ensemble/Ki67/cyclegan" \\
         --ens "layout term=$R/ensemble_layout1_stop20k/Ki67/cyclegan"
 
@@ -32,12 +32,18 @@ import argparse
 import json
 import os
 import re
+import sys
+
+# Run by path (python paper/<script>.py): the sibling scripts, and the repo's
+# topo_i2i even where the package is not installed.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path[:0] = [p for p in (_HERE, os.path.dirname(_HERE)) if p not in sys.path]
 
 import numpy as np
 import torch
 from PIL import Image
 
-from topo_i2i.figure import find_checkpoint, load_tile, to_rgb
+from fig2_loss import find_checkpoint, load_tile, to_rgb
 from topo_i2i.layout import layout_corr
 
 MODELS = ("topo", "cyclegan", "dclgan", "cyclediffusion")

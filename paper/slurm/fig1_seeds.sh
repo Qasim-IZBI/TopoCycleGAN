@@ -11,7 +11,7 @@
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
 
-# The inversion figure (topo_i2i/seeds_figure.py): one tile through the first
+# The inversion figure (paper/fig1_seeds.py): one tile through the first
 # N_SEEDS seeds of an ensemble, one grid row per ensemble, every output
 # labelled with its layout r (inverted ones framed red).
 #
@@ -28,11 +28,11 @@
 # DOMAIN=he) or ${SPLIT}B (IHC, DOMAIN=ihc). Pick one with seeds that invert,
 # e.g. from the inverted members' preds and inversion.csv.
 #
-#   mkdir -p logs_topo
-#   sbatch --export=ALL,MARKER=Ki67,MODEL=cyclegan,TILE=<name>.png seeds_figure.sh
-#   sbatch --export=ALL,MARKER=Ki67,MODEL=topo,TILE=<name>.png,OLD_DIR=$R/archive_ki67_topo_lt0.002_cyc1 seeds_figure.sh
-#   sbatch --export=ALL,MARKER=Ki67,MODEL=dclgan,TILE=<name>.png,DOMAIN=ihc,N_SEEDS=6 seeds_figure.sh
-#   sbatch --export=ALL,MARKER=Ki67,IMAGE=/path/he.png,ENS="CycleGAN=$R/ensemble/Ki67/cyclegan;DCLGAN=$R/ensemble/Ki67/dclgan" seeds_figure.sh
+#   cd paper/slurm && mkdir -p logs_topo
+#   sbatch --export=ALL,MARKER=Ki67,MODEL=cyclegan,TILE=<name>.png fig1_seeds.sh
+#   sbatch --export=ALL,MARKER=Ki67,MODEL=topo,TILE=<name>.png,OLD_DIR=$R/archive_ki67_topo_lt0.002_cyc1 fig1_seeds.sh
+#   sbatch --export=ALL,MARKER=Ki67,MODEL=dclgan,TILE=<name>.png,DOMAIN=ihc,N_SEEDS=6 fig1_seeds.sh
+#   sbatch --export=ALL,MARKER=Ki67,IMAGE=/path/he.png,ENS="CycleGAN=$R/ensemble/Ki67/cyclegan;DCLGAN=$R/ensemble/Ki67/dclgan" fig1_seeds.sh
 #
 # Output: ${OUT}/<MARKER>_<MODEL>_<tile>/ -- grid.<FORMAT>, and per row
 # input.png, seed<k>.png and summary.json (r, inverted, checkpoint, step).
@@ -48,6 +48,9 @@ fi
 
 : "${MARKER:?set MARKER, e.g. --export=ALL,MARKER=Ki67}"
 ROOT=${ROOT:-/work2/bz66izin-TopoCG}
+REPO_ROOT=${REPO_ROOT:-/home/sc.uni-leipzig.de/bz66izin/TopoCG_Project/TopoCycleGAN}
+PAPER="${REPO_ROOT}/paper"
+[ -d "$PAPER" ] || { echo "ERROR: no paper/ under REPO_ROOT=${REPO_ROOT}" >&2; exit 1; }
 MODEL=${MODEL:-cyclegan}
 DOMAIN=${DOMAIN:-he}
 N_SEEDS=${N_SEEDS:-10}
@@ -88,7 +91,7 @@ DEST="${OUT}/${MARKER}_${MODEL}_${tile}"
 echo "seeds figure ${MARKER} / ${MODEL}: ${IMAGE} (${DOMAIN})"
 echo "  output ${DEST}"
 
-python -m topo_i2i.seeds_figure --image "$IMAGE" --domain "$DOMAIN" \
+python "${PAPER}/fig1_seeds.py" --image "$IMAGE" --domain "$DOMAIN" \
     --n-seeds "$N_SEEDS" --outdir "$DEST" --format "$FORMAT" "${ARGS[@]}"
 
 echo

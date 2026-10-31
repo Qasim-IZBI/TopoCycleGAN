@@ -27,7 +27,7 @@ merges or fills. Negating every value changes no distance -- sorting and
 pairing commute with it, and the zero padding stays zero -- so the numbers
 printed are the loss's own. --sublevel plots the filtered values as they are.
 
-    topo-figure --he he.png --ihc ihc.png \\
+    python paper/fig2_loss.py --he he.png --ihc ihc.png \\
         --ckpt-dir runs/results/Ki67_lt0.01_cyc0_trans1 --outdir fig2/ki67
 """
 
@@ -38,6 +38,12 @@ import glob
 import json
 import os
 import re
+import sys
+
+# Run by path (python paper/<script>.py): the sibling scripts, and the repo's
+# topo_i2i even where the package is not installed.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path[:0] = [p for p in (_HERE, os.path.dirname(_HERE)) if p not in sys.path]
 
 import numpy as np
 import torch

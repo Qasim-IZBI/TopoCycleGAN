@@ -1,11 +1,15 @@
-"""Tests for the loss-figure tool's own logic. Run: pytest -q"""
+"""Tests for the paper figures' own logic (paper/). Run: pytest -q"""
+
+import os
+import sys
 
 import numpy as np
 import pytest
 import torch
 
-from topo_i2i.figure import find_checkpoint, sorted_pair
-from topo_i2i.losses import diagram_distance
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "paper"))
+from fig2_loss import find_checkpoint, sorted_pair  # noqa: E402
+from topo_i2i.losses import diagram_distance  # noqa: E402
 
 
 def test_find_checkpoint_takes_the_newest_step(tmp_path):
@@ -33,7 +37,7 @@ def test_plotted_pair_is_the_distance(how):
 
 
 def test_seed_dirs_in_an_ensemble_and_an_archive(tmp_path):
-    from topo_i2i.seeds_figure import seed_dirs
+    from fig1_seeds import seed_dirs
     for k in (0, 1, 10):
         (tmp_path / "ens" / "results" / ("seed%d" % k) / "checkpoints").mkdir(parents=True)
     assert list(seed_dirs(str(tmp_path / "ens"))) == [0, 1, 10]          # numeric order

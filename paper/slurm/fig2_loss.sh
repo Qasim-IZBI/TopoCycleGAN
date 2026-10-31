@@ -11,7 +11,7 @@
 #SBATCH --ntasks=1
 # No --gres: two generator passes per pair and persistence are fine on CPU.
 
-# The loss figure's panels (topo_i2i/figure.py) for H&E / IHC pairs: the two
+# The loss figure's panels (paper/fig2_loss.py) for H&E / IHC pairs: the two
 # translations, the four stain fields, their persistence diagrams, the
 # reduced-axis diagrams and the two ph_trans pairings, from a trained model.
 #
@@ -27,12 +27,12 @@
 #                          (matched_pairs, SEED, SAMPLE) -- look through them and
 #                          rerun with the one for the figure
 #
-#   mkdir -p logs_topo
-#   sbatch --export=ALL,MARKER=Ki67 figure.sh                      # 8 candidates
-#   sbatch --export=ALL,MARKER=Ki67,PAIRS=20,SEED=1 figure.sh
-#   sbatch --export=ALL,MARKER=Ki67,TILE=<name>.png figure.sh
-#   sbatch --export=ALL,MARKER=ER,HE=/path/he.png,IHC=/path/ihc.png,FORMAT=svg figure.sh
-#   sbatch --export=ALL,MARKER=Ki67,CKPT_DIR=$R/worstfield_layout/ki67/results/Ki67_lt0.01_cyc0_trans1 figure.sh
+#   cd paper/slurm && mkdir -p logs_topo
+#   sbatch --export=ALL,MARKER=Ki67 fig2_loss.sh                      # 8 candidates
+#   sbatch --export=ALL,MARKER=Ki67,PAIRS=20,SEED=1 fig2_loss.sh
+#   sbatch --export=ALL,MARKER=Ki67,TILE=<name>.png fig2_loss.sh
+#   sbatch --export=ALL,MARKER=ER,HE=/path/he.png,IHC=/path/ihc.png,FORMAT=svg fig2_loss.sh
+#   sbatch --export=ALL,MARKER=Ki67,CKPT_DIR=$R/worstfield_layout/ki67/results/Ki67_lt0.01_cyc0_trans1 fig2_loss.sh
 #
 # Output: ${OUT}/<marker>/<tile>/ -- image_*.png, field_*.png/.npy,
 # diagram_*, projection_*, pair_trans_{H,I}, overview.png, summary.json.
@@ -49,6 +49,9 @@ fi
 
 : "${MARKER:?set MARKER, e.g. --export=ALL,MARKER=Ki67}"
 ROOT=${ROOT:-/work2/bz66izin-TopoCG}
+REPO_ROOT=${REPO_ROOT:-/home/sc.uni-leipzig.de/bz66izin/TopoCG_Project/TopoCycleGAN}
+PAPER="${REPO_ROOT}/paper"
+[ -d "$PAPER" ] || { echo "ERROR: no paper/ under REPO_ROOT=${REPO_ROOT}" >&2; exit 1; }
 MARKER_LC=$(echo "$MARKER" | tr 'A-Z' 'a-z')
 SWEEP_ROOT=${SWEEP_ROOT:-${ROOT}/sweep_layout}
 RUN=${RUN:-lt0.01_cyc0_trans1}
@@ -116,7 +119,7 @@ while IFS=$'\t' read -r he ihc; do
     tile=$(basename "${he%.*}")
     echo
     echo "--- ${MARKER} / ${tile}"
-    python -m topo_i2i.figure --he "$he" --ihc "$ihc" --ckpt-dir "$CKPT_DIR" \
+    python "${PAPER}/fig2_loss.py" --he "$he" --ihc "$ihc" --ckpt-dir "$CKPT_DIR" \
         --outdir "${OUT}/${MARKER}/${tile}" --image-size "$IMAGE_SIZE" \
         --format "$FORMAT" ${EXTRA[@]+"${EXTRA[@]}"}
 done <<< "$pairlist"

@@ -11,7 +11,7 @@
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
 
-# The qualitative figure (topo_i2i/qual_figure.py): one row per dataset -- H&E
+# The qualitative figure (paper/fig5_qualitative.py): one row per dataset -- H&E
 # input, real target, TopoCycleGAN, CycleGAN, DCLGAN, CycleDiffusion -- every
 # model on the same tile, from seed SEED's predictions in ENS_ROOT.
 #
@@ -28,8 +28,8 @@
 # steps); without it the column says n/a. Same for TOPO_<M>, CYC_<M>, DCL_<M>
 # to override the ensemble's seed SEED.
 #
-#   mkdir -p logs_topo
-#   sbatch --export=ALL,TILE_Ki67=<t>.png,TILE_ER=<t>.png,TILE_HER2=<t>.png,TILE_PR=<t>.png,TILE_BCI=<t>.png,TILE_VS=<t>.png qual_figure.sh
+#   cd paper/slurm && mkdir -p logs_topo
+#   sbatch --export=ALL,TILE_Ki67=<t>.png,TILE_ER=<t>.png,TILE_HER2=<t>.png,TILE_PR=<t>.png,TILE_BCI=<t>.png,TILE_VS=<t>.png fig5_qualitative.sh
 #   ... ,CD_Ki67=$R/Outputs_ki67_cyclediffusion_small/results/Ki67_cyclediffusion_small    # run CD here
 #   ... ,CROP="64 64 128"          # the same 128 px window of every panel
 #
@@ -46,6 +46,9 @@ if command -v module >/dev/null 2>&1; then
 fi
 
 ROOT=${ROOT:-/work2/bz66izin-TopoCG}
+REPO_ROOT=${REPO_ROOT:-/home/sc.uni-leipzig.de/bz66izin/TopoCG_Project/TopoCycleGAN}
+PAPER="${REPO_ROOT}/paper"
+[ -d "$PAPER" ] || { echo "ERROR: no paper/ under REPO_ROOT=${REPO_ROOT}" >&2; exit 1; }
 ENS_ROOT=${ENS_ROOT:-${ROOT}/ensemble_layout1_stop20k}
 SEED=${SEED:-0}
 MARKERS=${MARKERS:-"Ki67 ER HER2 PR BCI VS"}
@@ -92,7 +95,7 @@ json.dump({"rows": rows, "models": [n for n, _, _ in models],
 print("%d rows -> %s" % (len(rows), sys.argv[1]))
 PY
 
-python -m topo_i2i.qual_figure --config "$CONFIG" --out "${OUT}/qual.${FORMAT}" \
+python "${PAPER}/fig5_qualitative.py" --config "$CONFIG" --out "${OUT}/qual.${FORMAT}" \
     --cd-steps "${CD_STEPS:-50}" ${CROP:+--crop $CROP}
 
 echo

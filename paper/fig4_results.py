@@ -16,7 +16,7 @@ Reads the members.csv tools/ensemble_report.py writes -- one or more, e.g. the
 valA report of the MIST markers, BCI's testA one and VS's -- and a member that
 inverted (inverted = 1) is drawn as a cross, so the figure never hides one.
 
-    python tools/results_figure.py \\
+    python paper/fig4_results.py \\
         --members $R/eval/ensemble_report/valA_test_cpsam/members.csv \\
                   $R/eval/ensemble_report/testA_all_cpsam/members.csv \\
                   $R/eval/ensemble_report/testA_all/members.csv \\

@@ -9,7 +9,7 @@ not what a file says it should have -- and, when given, the audit's AUROCs:
     worst    screening AUROC (slice 1) from the comment topo-worst-field wrote
              into <worst-audit>/recommended_<marker>.env
 
-    python tools/field_table.py --root /work2/bz66izin-TopoCG \\
+    python paper/tab1_fields.py --root /work2/bz66izin-TopoCG \\
         --audit $R/field_audit_v2 --worst-audit $R/field_worst_v2 --out fields.csv
 
 fields.csv is key,value lines for the paper's fill_results.py (--manual takes
@@ -149,7 +149,7 @@ def main() -> None:
 
     with open(a.out, "w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["# written by tools/field_table.py"])
+        w.writerow(["# written by paper/tab1_fields.py"])
         w.writerows(rows)
     for pre, title in (("fields", "chosen (main paper)"), ("fieldsworst", "worst (supplementary)")):
         print("\n%s" % title)

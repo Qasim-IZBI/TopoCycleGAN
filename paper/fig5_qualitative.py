@@ -27,8 +27,8 @@ From Python:
               ...]
     models = ["TopoCycleGAN", "CycleGAN", "DCLGAN", "CycleDiffusion"]   # column order
 
-or from a JSON file with those two keys:  topo-qual-figure --config fig5.json --out fig5/qual.pdf
-(slurm/qual_figure.sh writes that JSON from the cluster's directory layout).
+or from a JSON file with those two keys:  python paper/fig5_qualitative.py --config fig5.json --out fig5/qual.pdf
+(paper/slurm/fig5_qualitative.sh writes that JSON from the cluster's directory layout).
 
 --crop X Y SIZE shows the same window of every panel instead of the whole tile
 (pixel coordinates on the --image-size tile), for a closer look at nuclei.
@@ -40,6 +40,12 @@ import argparse
 import glob
 import json
 import os
+import sys
+
+# Run by path (python paper/<script>.py): the sibling scripts, and the repo's
+# topo_i2i even where the package is not installed.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path[:0] = [p for p in (_HERE, os.path.dirname(_HERE)) if p not in sys.path]
 
 import numpy as np
 import torch
@@ -86,8 +92,8 @@ class _Models:
         self.cd_steps, self.cache = cd_steps, {}
 
     def translate(self, src: str, he_path: str, size: int) -> np.ndarray:
-        from topo_i2i.figure import find_checkpoint, load_tile, to_rgb
-        from topo_i2i.seeds_figure import load_any
+        from fig2_loss import find_checkpoint, load_tile, to_rgb
+        from fig1_seeds import load_any
         if src not in self.cache:
             ckpt = find_checkpoint(src)
             self.cache[src] = load_any(ckpt, src, self.device, cd_steps=self.cd_steps)[0]
