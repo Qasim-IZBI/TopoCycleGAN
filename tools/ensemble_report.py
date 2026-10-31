@@ -14,6 +14,12 @@ INVERTED  how many seeds invert the tissue / lumen layout -- the cause of the
           collapse -- read from the inversion.csv tools/invert_check.py
           --ensemble writes beside each member's results. Sharper than the
           recall cut-off, and the one to use where recall is not bimodal (BCI).
+EXTRA     on the same half, when the member has them: bm0_norm, the Betti
+          matching error of the nuclei normalised by the number of nuclei
+          (nuclei_topo_tiles.csv); pos_mae, the mean over tiles of |positive-
+          nuclei % generated - real| and pos_diff, |pooled positive % generated
+          - real| (nuclei_positivity_tiles.csv), both in percentage points; and
+          for VS cpa_mae, the slide-level CPA MAE in percentage points (cpa.csv).
 VERSUS    mean recall of TopoCycleGAN minus that of each baseline, with a 95%
           interval from a two-level bootstrap: resample the slides (paired --
           one resample feeds every model), then each model's seeds. It covers
@@ -51,7 +57,10 @@ from select_config import Model, read_rows  # noqa: E402
 
 MODELS = (("topo", "TopoCycleGAN"), ("cyclegan", "CycleGAN small"), ("dclgan", "DCLGAN small"))
 MEMBER_RE = re.compile(r"^(?P<m>.+)_(?P<model>topo|cyclegan|dclgan)_seed(?P<k>\d+)$")
-METRICS = ("recall", "precision", "f1", "patch_ssim", "lpips", "fid")
+METRICS = ("recall", "precision", "f1", "patch_ssim", "lpips", "fid",
+           "bm0_norm", "pos_mae", "pos_diff", "cpa_mae")
+EXTRA = METRICS[6:]
+MIN_NUCLEI = 5          # as tools/positivity_eval.py: tiles below it carry no rate
 
 
 class WholeSplit(dict):
@@ -103,6 +112,41 @@ def inverted_of(member_dir: str) -> Optional[int]:
         if row and row[0] == "inverted":
             return int(float(row[1]))
     return None
+
+
+def _tile_rows(path: str, split, half: str) -> List[Dict[str, str]]:
+    if not os.path.isfile(path):
+        return []
+    rows = read_rows(path)
+    head = rows[0]
+    return [dict(zip(head, r)) for r in rows[1:] if r and split.get(r[0]) == half]
+
+
+def extra_of(member_dir: str, nuclei_dir: str, split, half: str) -> Dict[str, Optional[float]]:
+    """Topology, positivity and CPA of one member on one half (None if absent)."""
+    out: Dict[str, Optional[float]] = {k: None for k in EXTRA}
+    nd = os.path.join(member_dir, nuclei_dir)
+    topo = _tile_rows(os.path.join(nd, "nuclei_topo_tiles.csv"), split, half)
+    if topo:
+        feats = sum(int(r["b0_ref"]) + int(r["b0_pred"]) for r in topo)
+        out["bm0_norm"] = sum(int(r["bm0"]) for r in topo) / feats if feats else 0.0
+    pos = _tile_rows(os.path.join(nd, "nuclei_positivity_tiles.csv"), split, half)
+    if pos:
+        n_r = sum(int(r["n_real"]) for r in pos)
+        n_g = sum(int(r["n_gen"]) for r in pos)
+        if n_r and n_g:
+            out["pos_diff"] = 100 * abs(sum(int(r["pos_gen"]) for r in pos) / n_g
+                                        - sum(int(r["pos_real"]) for r in pos) / n_r)
+        diffs = [abs(float(r["rate_gen"]) - float(r["rate_real"])) for r in pos
+                 if int(r["n_real"]) >= MIN_NUCLEI and int(r["n_gen"]) >= MIN_NUCLEI]
+        if diffs:
+            out["pos_mae"] = 100 * st.mean(diffs)
+    cpa = os.path.join(member_dir, "cpa.csv")
+    if os.path.isfile(cpa):
+        for r in read_rows(cpa)[1:]:
+            if r and r[0] == "cpa_mae" and r[1]:
+                out["cpa_mae"] = 100 * float(r[1])
+    return out
 
 
 def fmt(v, d=4):
@@ -159,6 +203,7 @@ def main() -> None:
                     "f1": nuc.get("f1"), "patch_ssim": mod.mean("patch_ssim", half),
                     "lpips": mod.mean("lpips", half), "fid": fid_of(mod, half),
                     "inverted": inverted_of(os.path.join(ens_dir, name))}
+            vals.update(extra_of(os.path.join(ens_dir, name), nuclei_dir, split, half))
             members[mm.group("model")].append((int(mm.group("k")), mod, vals))
 
         print("\n== %s / %s, %s half   (%s nuclei, recall at r=%s px; collapsed = recall < %g)"
@@ -178,7 +223,7 @@ def main() -> None:
                 v = [vals[m] for _, _, vals in ms if vals[m] is not None]
                 if v:
                     sd = st.stdev(v) if len(v) > 1 else 0.0
-                    d = {"fid": 1, "lpips": 4}.get(m, 3)
+                    d = {"fid": 1, "lpips": 4, "pos_mae": 1, "pos_diff": 1, "cpa_mae": 2}.get(m, 3)
                     cells.append(("%." + str(d) + "f ± %." + str(d) + "f") % (st.mean(v), sd))
                     if m == "recall":
                         cells.append("%.3f" % min(v))
@@ -192,8 +237,11 @@ def main() -> None:
             row += [n_fail, sum(inv) if inv else "", len(inv)]
             spread_rows.append(row)
             print("  %-15s %5d  %-15s %6s  %-15s %-15s %-15s %-17s %-15s %-9s %s"
-                  % (nice, len(ms), *cells, "%d/%d" % (n_fail, len(recs)),
+                  % (nice, len(ms), *cells[:7], "%d/%d" % (n_fail, len(recs)),
                      "%d/%d" % (sum(inv), len(inv)) if inv else "-"))
+            extra = ["%s %s" % (m, c) for m, c in zip(EXTRA, cells[7:]) if c != "-"]
+            if extra:
+                print("  %-15s        %s" % ("", "   ".join(extra)))
 
         topo = [mod.slide_sums(half) for _, mod, vals in members["topo"] if vals["recall"] is not None]
         for key, nice in MODELS[1:]:
